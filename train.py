@@ -1,7 +1,6 @@
 '''
 This script handling the training process.
 '''
-
 import argparse
 import math
 import time
@@ -176,10 +175,10 @@ def main():
     ''' Main function '''
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-data', required=True)
-
-    parser.add_argument('-epoch', type=int, default=10)
-    parser.add_argument('-batch_size', type=int, default=64)
+    parser.add_argument('-epoch', type=int, default=1)
+    parser.add_argument('-batch_size', type=int, default=4)
+    parser.add_argument('-context_width', type=int, default=1)
+    parser.add_argument('-frame_rate', type=int, default=30)
 
     #parser.add_argument('-d_word_vec', type=int, default=512)
     parser.add_argument('-d_model', type=int, default=512)
@@ -192,15 +191,11 @@ def main():
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
-    parser.add_argument('-embs_share_weight', action='store_true')
-    parser.add_argument('-proj_share_weight', action='store_true')
 
     parser.add_argument('-log', default=None)
-    parser.add_argument('-save_model', default=None)
+    parser.add_argument('-save_model', default='./exp')
     parser.add_argument('-save_mode', type=str,
                         choices=['all', 'best'], default='best')
-
-    parser.add_argument('-no_cuda', action='store_true')
 
     opt = parser.parse_args()
 
@@ -209,24 +204,36 @@ def main():
     config.read(cfg_path)
 
     #========= Preparing DataLoader =========#
-    training_data = DataLoader('train', config, device, batch_size=4)
-    validation_data = DataLoader('dev', config, device, batch_size=4)
-    test_data = DataLoader('test', config, device, batch_size=4)
+    training_data = DataLoader(
+        'train', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+    validation_data = DataLoader(
+        'dev', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+    test_data = DataLoader(
+        'test', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
 
     #========= Preparing Model =========#
 
     print(opt)
 
+    input_dim = training_data.features_dim
+    output_dim = training_data.vocab_size
+    n_inputs_max_seq = max(
+        training_data.inputs_max_seq_lengths,
+        validation_data.inputs_max_seq_lengths,
+        test_data.inputs_max_seq_lengths)
+    n_outputs_max_seq = max(
+        training_data.outputs_max_seq_lengths,
+        validation_data.outputs_max_seq_lengths,
+        test_data.outputs_max_seq_lengths)
+
     transformer = Transformer(
-        opt.src_vocab_size,
-        opt.tgt_vocab_size,
-        opt.max_token_seq_len,
-        proj_share_weight=opt.proj_share_weight,
-        embs_share_weight=opt.embs_share_weight,
+        input_dim,
+        output_dim,
+        n_inputs_max_seq,
+        n_outputs_max_seq,
         d_k=opt.d_k,
         d_v=opt.d_v,
         d_model=opt.d_model,
-        d_word_vec=opt.d_word_vec,
         d_inner_hid=opt.d_inner_hid,
         n_layers=opt.n_layers,
         n_head=opt.n_head,
@@ -240,17 +247,16 @@ def main():
             betas=(0.9, 0.98), eps=1e-09),
         opt.d_model, opt.n_warmup_steps)
 
-    def get_criterion(vocab_size):
+    def get_criterion(output_dim):
         ''' With PAD token zero weight '''
-        weight = torch.ones(vocab_size)
+        weight = torch.ones(output_dim)
         weight[Constants.PAD] = 0
         return nn.CrossEntropyLoss(weight, size_average=False)
 
-    crit = get_criterion(training_data.tgt_vocab_size)
+    crit = get_criterion(training_data.vocab_size)
 
-    if opt.cuda:
-        transformer = transformer.cuda()
-        crit = crit.cuda()
+    transformer = transformer.to(device)
+    crit = crit.to(device)
 
     train(transformer, training_data, validation_data, crit, optimizer, opt)
 

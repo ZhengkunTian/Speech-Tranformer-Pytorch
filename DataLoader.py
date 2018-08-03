@@ -1,5 +1,6 @@
 ''' Data Loader class for training iteration '''
 import random
+import math
 import numpy as np
 import torch
 import transformer.Constants as Constants
@@ -20,12 +21,18 @@ class DataLoader(object):
                               data_name) + '/' + config.get('dnn-features', 'name')
         textfile = config.get('directories', '%s_data' % data_name) + '/text'
 
+        self.conf = dict(config.items('dnn-features'))
+
         self.train = True if data_name == 'train' else False
 
         self.device = device
 
         with open(feat_dir + '/maxlength', 'r') as fid:
             self.max_input_length = int(fid.read())
+
+        self.context_width = context_width
+
+        self.frame_rate = frame_rate
 
         self.feature_reader = feature_reader.FeatureReader(
             feat_dir + '/feats.scp', feat_dir + '/cmvn.scp',
@@ -38,7 +45,8 @@ class DataLoader(object):
 
         self._iter_count = 0
 
-        self.target_dict = self.read_target_file(textfile)
+        self.target_dict, self._outputs_max_seq_lengths = self.read_target_file(
+            textfile)
 
         self.target_coder = target_coder.ChinesePhoneEncoder(
             target_normalizers.SosEosNorm)
@@ -62,10 +70,31 @@ class DataLoader(object):
         return self.num_utt
 
     @property
-    def tgt_vocab_size(self):
+    def vocab_size(self):
         '''the number of output labels'''
 
         return self.target_coder.num_labels
+
+    @property
+    def inputs_max_seq_lengths(self):
+        max_seq_length = math.ceil(
+            float(self.max_input_length) / (self.frame_rate / 10))
+        return max_seq_length
+
+    @property
+    def outputs_max_seq_lengths(self):
+        return self._outputs_max_seq_lengths
+
+    @property
+    def features_dim(self):
+        dim = int(self.conf['nfilt'])
+        include_energy = 1 if bool(self.conf['include_energy']) else 0
+        dd = 2 if self.conf['dynamic'] == 'ddelta' else 0
+        d = 1 if self.conf['dynamic'] == 'delta' else 0
+        self._features_dim = (2 * self.context_width + 1) * \
+            (dim + include_energy) * (1 + dd + d)
+
+        return self._features_dim
 
     @property
     def tagter_coder(self):
@@ -194,13 +223,15 @@ class DataLoader(object):
         '''
 
         target_dict = {}
-
+        max_len = 0
         with open(target_path, 'r', encoding='utf-8') as fid:
             for line in fid:
                 splitline = line.strip().split(' ')
+                tmp_len = max(len(splitline) + 2, max_len)
+                max_len = tmp_len
                 target_dict[splitline[0]] = ' '.join(splitline[1:])
 
-        return target_dict
+        return target_dict, max_len
 
     def reset_loader(self):
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 ''' Define the Transformer model '''
 import torch
 import torch.nn as nn
@@ -25,6 +26,7 @@ def position_encoding_init(n_position, d_pos_vec):
 
 def get_attn_padding_mask(seq_q, seq_k):
     ''' Indicate the padding-related part to mask '''
+    # 遮掉填充的信息
     assert seq_q.dim() == 2 and seq_k.dim() == 2
     mb_size, len_q = seq_q.size()
     mb_size, len_k = seq_k.size()
@@ -77,7 +79,7 @@ class Encoder(nn.Module):
             enc_slf_attns = []
 
         enc_output = enc_input
-        enc_slf_attn_mask = get_attn_padding_mask(inputs_data, inputs_data)
+        enc_slf_attn_mask = get_attn_padding_mask(inputs_pos, inputs_pos)
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
                 enc_output, slf_attn_mask=enc_slf_attn_mask)
@@ -123,7 +125,7 @@ class Decoder(nn.Module):
                          d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, outputs_data, outputs_pos, src_seq, enc_output, return_attns=False):
+    def forward(self, outputs_data, outputs_pos, input_pos, enc_output, return_attns=False):
         # Word embedding look up
         dec_input = self.tgt_word_emb(outputs_data)
 
@@ -133,13 +135,15 @@ class Decoder(nn.Module):
         dec_input += self.position_enc(outputs_pos)
 
         # Decode
+        # mask 去掉填充的信息
         dec_slf_attn_pad_mask = get_attn_padding_mask(
             outputs_data, outputs_data)
+        # mask 去掉每一步未来的信息
         dec_slf_attn_sub_mask = get_attn_subsequent_mask(outputs_data)
         dec_slf_attn_mask = torch.gt(
             dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
-
-        dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, src_seq)
+        # mask去掉在输入序列长度之后的信息
+        dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, input_pos)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
@@ -165,37 +169,23 @@ class Transformer(nn.Module):
     ''' A sequence to sequence model with attention mechanism. '''
 
     def __init__(
-            self, input_dim, output_dim, n_max_seq, n_layers=6, n_head=8,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, d_k=64, d_v=64,
-            dropout=0.1, proj_share_weight=True, embs_share_weight=True):
+            self, input_dim, output_dim, n_inputs_max_seq, n_outputs_max_seq, n_layers=6,
+            n_head=8, d_model=512, d_inner_hid=1024, d_k=64, d_v=64,
+            dropout=0.1):
 
         super(Transformer, self).__init__()
         self.encoder = Encoder(
-            input_dim, n_max_seq, n_layers=n_layers, n_head=n_head,
-            d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout)
+            input_dim, n_inputs_max_seq, n_layers=n_layers, n_head=n_head,
+            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout)
         self.decoder = Decoder(
-            n_tgt_vocab, n_max_seq, n_layers=n_layers, n_head=n_head,
-            d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout)
+            output_dim, n_outputs_max_seq, n_layers=n_layers, n_head=n_head,
+            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout)
         self.tgt_word_proj = Linear(d_model, output_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
 
         # assert d_model == d_word_vec, \
         #     'To facilitate the residual connections, \
         #  the dimensions of all module output shall be the same.'
-
-        if proj_share_weight:
-            # Share the weight matrix between tgt word embedding/projection
-            assert d_model == d_word_vec
-            self.tgt_word_proj.weight = self.decoder.tgt_word_emb.weight
-
-        if embs_share_weight:
-            # Share the weight matrix between src/tgt word embeddings
-            # assume the src/tgt word vec size are the same
-            assert n_src_vocab == n_tgt_vocab, \
-                "To share word embedding table, the vocabulary size of src/tgt shall be the same."
-            self.encoder.src_word_emb.weight = self.decoder.tgt_word_emb.weight
 
     def get_trainable_parameters(self):
         ''' Avoid updating the position encoding '''
