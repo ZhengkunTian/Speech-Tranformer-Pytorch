@@ -88,15 +88,10 @@ class Encoder(nn.Module):
             if return_attns:
                 enc_slf_attns += [enc_slf_attn]
 
-        print('*************2***************')
-        print(enc_output.size())
-
         if return_attns:
             return enc_output, enc_slf_attns
         else:
-            print('*************4***************')
-            print(enc_output.size())
-            return enc_output
+            return enc_output,
 
 
 class Decoder(nn.Module):
@@ -159,8 +154,6 @@ class Decoder(nn.Module):
 
         dec_output = dec_input
 
-        print('*****************3***********')
-        print(enc_output.size())
         for dec_layer in self.layer_stack:
             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
                 dec_output, enc_output,
@@ -174,7 +167,7 @@ class Decoder(nn.Module):
         if return_attns:
             return dec_output, dec_slf_attns, dec_enc_attns
         else:
-            return dec_output
+            return dec_output,
 
 
 class Transformer(nn.Module):
@@ -216,8 +209,7 @@ class Transformer(nn.Module):
         tgt_pos = tgt_pos[:, :-1]
 
         enc_output, *_ = self.encoder(src_seq, src_pos)
-        print('*****************1***************')
-        print(enc_output.size())
+
         dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_pos, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
 
