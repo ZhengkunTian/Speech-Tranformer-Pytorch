@@ -19,6 +19,7 @@ class DataLoader(object):
 
         feat_dir = config.get('directories', '%s_features' %
                               data_name) + '/' + config.get('dnn-features', 'name')
+
         textfile = config.get('directories', '%s_data' % data_name) + '/text'
 
         self.conf = dict(config.items('dnn-features'))
@@ -177,7 +178,12 @@ class DataLoader(object):
                         pass
 
             if not self.return_numpy:
-                inst_data_tensor = torch.FloatTensor(inst_data).to(self.device)
+                if not is_label:
+                    inst_data_tensor = torch.FloatTensor(
+                        inst_data).to(self.device)
+                else:
+                    inst_data_tensor = torch.LongTensor(
+                        inst_data).to(self.device)
                 inst_position_tensor = torch.LongTensor(
                     inst_position).to(self.device)
             else:

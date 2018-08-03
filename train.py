@@ -14,7 +14,7 @@ from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
 from DataLoader import DataLoader
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_performance(crit, pred, gold, smoothing=False, num_class=None):
@@ -205,11 +205,11 @@ def main():
 
     #========= Preparing DataLoader =========#
     training_data = DataLoader(
-        'train', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'train', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     validation_data = DataLoader(
-        'dev', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'dev', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     test_data = DataLoader(
-        'test', config, device, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'test', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
 
     #========= Preparing Model =========#
 
@@ -237,7 +237,8 @@ def main():
         d_inner_hid=opt.d_inner_hid,
         n_layers=opt.n_layers,
         n_head=opt.n_head,
-        dropout=opt.dropout)
+        dropout=opt.dropout,
+        device=DEVICE)
 
     # print(transformer)
 
@@ -255,8 +256,8 @@ def main():
 
     crit = get_criterion(training_data.vocab_size)
 
-    transformer = transformer.to(device)
-    crit = crit.to(device)
+    transformer = transformer.to(DEVICE)
+    crit = crit.to(DEVICE)
 
     train(transformer, training_data, validation_data, crit, optimizer, opt)
 

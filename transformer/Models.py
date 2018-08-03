@@ -35,7 +35,7 @@ def get_attn_padding_mask(seq_q, seq_k):
     return pad_attn_mask
 
 
-def get_attn_subsequent_mask(seq):
+def get_attn_subsequent_mask(seq, device="cpu"):
     ''' Get an attention mask to avoid using the subsequent info.'''
     assert seq.dim() == 2
     attn_shape = (seq.size(0), seq.size(1), seq.size(1))
@@ -50,7 +50,7 @@ class Encoder(nn.Module):
 
     def __init__(
             self, input_dim, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_model=512, d_inner_hid=1024, dropout=0.1, device="cpu"):
 
         super(Encoder, self).__init__()
 
@@ -64,6 +64,8 @@ class Encoder(nn.Module):
             n_position, d_model)
 
         self.input_proj = Linear(input_dim, d_model)
+
+        self.device = device
 
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner_hid, n_head,
@@ -86,9 +88,14 @@ class Encoder(nn.Module):
             if return_attns:
                 enc_slf_attns += [enc_slf_attn]
 
+        print('*************2***************')
+        print(enc_output.size())
+
         if return_attns:
             return enc_output, enc_slf_attns
         else:
+            print('*************4***************')
+            print(enc_output.size())
             return enc_output
 
 
@@ -97,7 +104,7 @@ class Decoder(nn.Module):
 
     def __init__(
             self, output_dim, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_model=512, d_inner_hid=1024, dropout=0.1):
+            d_model=512, d_inner_hid=1024, dropout=0.1, device="cpu"):
 
         super(Decoder, self).__init__()
         n_position = n_max_seq + 1
@@ -105,20 +112,21 @@ class Decoder(nn.Module):
         self.d_model = d_model
 
         self.position_enc = nn.Embedding(
-            n_position, output_dim, padding_idx=Constants.PAD)
+            n_position, d_model, padding_idx=Constants.PAD)
 
         self.position_enc.weight.data = position_encoding_init(
-            n_position, output_dim)
+            n_position, d_model)
 
         # self.tgt_word_emb = nn.Embedding(
         #     output_dim, output_dim, padding_idx=Constants.PAD)
 
         self.tgt_word_emb = nn.Embedding(
             output_dim, output_dim, padding_idx=Constants.PAD)
-
         self.dropout = nn.Dropout(dropout)
 
         self.input_proj = Linear(output_dim, d_model)
+
+        self.device = device
 
         self.layer_stack = nn.ModuleList([
             DecoderLayer(d_model, d_inner_hid, n_head,
@@ -139,7 +147,8 @@ class Decoder(nn.Module):
         dec_slf_attn_pad_mask = get_attn_padding_mask(
             outputs_data, outputs_data)
         # mask 去掉每一步未来的信息
-        dec_slf_attn_sub_mask = get_attn_subsequent_mask(outputs_data)
+        dec_slf_attn_sub_mask = get_attn_subsequent_mask(
+            outputs_data, self.device)
         dec_slf_attn_mask = torch.gt(
             dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
         # mask去掉在输入序列长度之后的信息
@@ -149,6 +158,9 @@ class Decoder(nn.Module):
             dec_slf_attns, dec_enc_attns = [], []
 
         dec_output = dec_input
+
+        print('*****************3***********')
+        print(enc_output.size())
         for dec_layer in self.layer_stack:
             dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
                 dec_output, enc_output,
@@ -171,7 +183,7 @@ class Transformer(nn.Module):
     def __init__(
             self, input_dim, output_dim, n_inputs_max_seq, n_outputs_max_seq, n_layers=6,
             n_head=8, d_model=512, d_inner_hid=1024, d_k=64, d_v=64,
-            dropout=0.1):
+            dropout=0.1, device="cpu"):
 
         super(Transformer, self).__init__()
         self.encoder = Encoder(
@@ -204,7 +216,9 @@ class Transformer(nn.Module):
         tgt_pos = tgt_pos[:, :-1]
 
         enc_output, *_ = self.encoder(src_seq, src_pos)
-        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
+        print('*****************1***************')
+        print(enc_output.size())
+        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_pos, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
 
         return seq_logit.view(-1, seq_logit.size(2))
