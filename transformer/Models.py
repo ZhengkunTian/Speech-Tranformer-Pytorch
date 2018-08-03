@@ -145,7 +145,7 @@ class Decoder(nn.Module):
         dec_slf_attn_sub_mask = get_attn_subsequent_mask(
             outputs_data, self.device)
         dec_slf_attn_mask = torch.gt(
-            dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
+            dec_slf_attn_pad_mask.to(self.device) + dec_slf_attn_sub_mask, 0)
         # mask去掉在输入序列长度之后的信息
         dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, input_pos)
 
