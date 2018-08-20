@@ -22,6 +22,8 @@ class DataLoader(object):
 
         textfile = config.get('directories', '%s_data' % data_name) + '/text'
 
+        self.data_name = data_name
+
         self.conf = dict(config.items('dnn-features'))
 
         self.train = True if data_name == 'train' else False
@@ -64,6 +66,8 @@ class DataLoader(object):
 
         if self._need_shuffle:
             self.shuffle()
+
+        self.get_info()
 
     @property
     def n_insts(self):
@@ -149,43 +153,50 @@ class DataLoader(object):
 
         def pad_to_longest(insts, is_label=False, pad_to_max_len=False):
             ''' Pad the instance to the max seq length in batch '''
+            # print(len(insts[0]))
+            if not pad_to_max_len:
+                max_len = max(inst.shape[0] for inst in insts)
+            else:
+                if is_label:
+                    max_len = self.outputs_max_seq_lengths
+                else:
+                    max_len = self.inputs_max_seq_lengths
 
-            max_len = max(inst.shape[0] for inst in insts)
             dim = insts[0].shape[-1]
+            insts_data = []
+            insts_position = []
             for i in range(len(insts)):
                 if not is_label:
                     pad_zeros_mat = np.zeros(
                         [max_len - insts[i].shape[0], dim], dtype=np.int16)
-                    insts[i] = np.row_stack([insts[i], pad_zeros_mat])
-                    insts[i] = insts[i][np.newaxis, :]
+                    insts_data.append(np.row_stack([insts[i], pad_zeros_mat]))
+                    insts_data[i] = insts_data[i][np.newaxis, :]
 
                 else:
-                    insts[i] = insts[i][np.newaxis, :]
                     pad_zeros_mat = np.zeros(
-                        [1, max_len - insts[i].shape[1]], dtype=np.int16)
-                    insts[i] = np.column_stack([insts[i], pad_zeros_mat])
+                        [1, max_len - insts[i].shape[0]], dtype=np.int16)
+                    insts_data.append(insts[i][np.newaxis, :])
+                    insts_data[i] = np.column_stack(
+                        [insts_data[i], pad_zeros_mat])
 
-            inst_data = np.row_stack(insts)
+                inst_pos = np.arange(1, len(insts[i]) + 1, 1).reshape(1, -1)
+                inst_pos_pad = np.zeros(
+                    [1, max_len - inst_pos.shape[1]], dtype=np.int16)
+                insts_position.append(
+                    np.column_stack([inst_pos, inst_pos_pad]))
 
-            inst_position = np.zeros(
-                [inst_data.shape[0], inst_data.shape[1]], dtype=np.int16)
-            # print(inst_data.shape)
-            for i in range(inst_data.shape[0]):
-                for j in range(inst_data.shape[1]):
-                    if inst_data[i][j].all() != 0:
-                        inst_position[i][j] = j + 1
-                    else:
-                        pass
+            inst_data = np.row_stack(insts_data)
+            inst_position = np.row_stack(insts_position)
 
             if not self.return_numpy:
                 if not is_label:
                     inst_data_tensor = torch.FloatTensor(
-                        inst_data).to(self.device)
+                        inst_data)
                 else:
                     inst_data_tensor = torch.LongTensor(
-                        inst_data).to(self.device)
+                        inst_data)
                 inst_position_tensor = torch.LongTensor(
-                    inst_position).to(self.device)
+                    inst_position)
             else:
                 inst_data_tensor = inst_data
                 inst_position_tensor = inst_position
@@ -246,3 +257,11 @@ class DataLoader(object):
             self.shuffle()
 
         self._iter_count = 0
+
+    def get_info(self):
+        print('**********************************')
+        print('There are %d utts in %s set!' % (self.n_insts, self.data_name))
+        print('The size of Vocab is %d' % self.vocab_size)
+        print('The max length of input is %d' % self.inputs_max_seq_lengths)
+        print('The max length of target is %d' % self.outputs_max_seq_lengths)
+        print('The dimsion of feature is %d' % self.features_dim)
