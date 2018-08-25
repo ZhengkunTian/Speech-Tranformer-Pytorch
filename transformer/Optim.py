@@ -9,6 +9,7 @@ class ScheduledOptim(object):
         self.d_model = d_model
         self.n_warmup_steps = n_warmup_steps
         self.n_current_steps = 0
+        self.current_lr = 0
 
     def step(self):
         "Step by the inner optimizer"
@@ -28,3 +29,4 @@ class ScheduledOptim(object):
 
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = new_lr
+            self.current_lr = new_lr

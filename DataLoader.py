@@ -15,7 +15,7 @@ __author__ = "Zhengkun Tian"
 class DataLoader(object):
     ''' For data iteration '''
 
-    def __init__(self, data_name, config, device, batch_size=4, context_width=0, frame_rate=10, shuffle=True, return_target=True, pad_to_max_len=False, return_numpy=False):
+    def __init__(self, data_name, config, batch_size=4, context_width=0, frame_rate=10, shuffle=True, return_target=True, pad_to_max_len=False, return_numpy=False):
 
         feat_dir = config.get('directories', '%s_features' %
                               data_name) + '/' + config.get('dnn-features', 'name')
@@ -27,8 +27,6 @@ class DataLoader(object):
         self.conf = dict(config.items('dnn-features'))
 
         self.train = True if data_name == 'train' else False
-
-        self.device = device
 
         with open(feat_dir + '/maxlength', 'r') as fid:
             self.max_input_length = int(fid.read())
@@ -104,6 +102,7 @@ class DataLoader(object):
     @property
     def tagter_coder(self):
         return tagter_coder
+
 
     def shuffle(self):
         ''' Shuffle data for a brand new start '''
@@ -257,11 +256,13 @@ class DataLoader(object):
             self.shuffle()
 
         self._iter_count = 0
+    
 
     def get_info(self):
         print('**********************************')
         print('There are %d utts in %s set!' % (self.n_insts, self.data_name))
         print('The size of Vocab is %d' % self.vocab_size)
+        print('The number of utterance is %d' % self.n_insts)
         print('The max length of input is %d' % self.inputs_max_seq_lengths)
         print('The max length of target is %d' % self.outputs_max_seq_lengths)
         print('The dimsion of feature is %d' % self.features_dim)

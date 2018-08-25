@@ -35,13 +35,12 @@ def get_attn_padding_mask(seq_q, seq_k):
     return pad_attn_mask
 
 
-def get_attn_subsequent_mask(seq, device="cpu"):
+def get_attn_subsequent_mask(seq):
     ''' Get an attention mask to avoid using the subsequent info.'''
     assert seq.dim() == 2
     attn_shape = (seq.size(0), seq.size(1), seq.size(1))
     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
     subsequent_mask = torch.from_numpy(subsequent_mask)
-    subsequent_mask = subsequent_mask.to(device)
     return subsequent_mask
 
 
@@ -75,6 +74,9 @@ class Encoder(nn.Module):
     def forward(self, inputs_data, inputs_pos, return_attns=False):
 
         # Position Encoding addition
+        inputs_data = inputs_data.to(self.device)
+        inputs_pos = inputs_pos.to(self.device)
+
         inputs_data = self.input_proj(inputs_data)
         enc_input = inputs_data + self.position_enc(inputs_pos)
         if return_attns:
@@ -130,8 +132,11 @@ class Decoder(nn.Module):
 
     def forward(self, outputs_data, outputs_pos, input_pos, enc_output, return_attns=False):
         # Word embedding look up
-        dec_input = self.tgt_word_emb(outputs_data)
+        outputs_data = outputs_data.to(self.device)
+        outputs_pos = outputs_pos.to(self.device)
+        input_pos = input_pos.to(self.device)
 
+        dec_input = self.tgt_word_emb(outputs_data)
         dec_input = self.input_proj(dec_input)
 
         # Position Encoding addition
@@ -140,14 +145,14 @@ class Decoder(nn.Module):
         # Decode
         # mask 去掉填充的信息
         dec_slf_attn_pad_mask = get_attn_padding_mask(
-            outputs_data, outputs_data)
+            outputs_data, outputs_data).to(self.device)
         # mask 去掉每一步未来的信息
         dec_slf_attn_sub_mask = get_attn_subsequent_mask(
-            outputs_data, self.device)
+            outputs_data).to(self.device)
         dec_slf_attn_mask = torch.gt(
-            dec_slf_attn_pad_mask.to(self.device) + dec_slf_attn_sub_mask, 0)
+            dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
         # mask去掉在输入序列长度之后的信息
-        dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, input_pos)
+        dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, input_pos).to(self.device)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
@@ -181,10 +186,10 @@ class Transformer(nn.Module):
         super(Transformer, self).__init__()
         self.encoder = Encoder(
             input_dim, n_inputs_max_seq, n_layers=n_layers, n_head=n_head,
-            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout)
+            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout, device=device)
         self.decoder = Decoder(
             output_dim, n_outputs_max_seq, n_layers=n_layers, n_head=n_head,
-            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout)
+            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout, device=device)
         self.tgt_word_proj = Linear(d_model, output_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
 

@@ -4,6 +4,7 @@ This script handling the training process.
 import argparse
 import math
 import time
+from tqdm import tqdm
 import torch
 import configparser
 import torch.nn as nn
@@ -17,7 +18,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_performance(crit, pred, gold, smoothing=False, num_class=None):
-    ''' Apply label smoothing if needed '''
+    ''' ACELossy label smoothing if needed '''
 
     # TODO: Add smoothing
     if smoothing:
@@ -29,6 +30,7 @@ def get_performance(crit, pred, gold, smoothing=False, num_class=None):
     loss = crit(pred, gold.contiguous().view(-1))
 
     pred = pred.max(1)[1]
+    # print(pred.size())
 
     gold = gold.contiguous().view(-1)
     n_correct = pred.data.eq(gold.data)
@@ -37,7 +39,7 @@ def get_performance(crit, pred, gold, smoothing=False, num_class=None):
     return loss, n_correct
 
 
-def train_epoch(model, training_data, crit, optimizer, all_steps, interval=5):
+def train_epoch(model, training_data, crit, optimizer):
     ''' Epoch operation in training phase'''
 
     model.train()
@@ -46,11 +48,11 @@ def train_epoch(model, training_data, crit, optimizer, all_steps, interval=5):
     n_total_words = 0
     n_total_correct = 0
 
-    for step, batch in enumerate(training_data):
+    for i, batch in enumerate(training_data):
 
         # prepare data
         src, tgt = batch
-        gold = tgt[0][:, 1:].to(DEVICE)
+        gold = tgt[0][:, 1:]
 
         # forward
         optimizer.zero_grad()
@@ -69,17 +71,13 @@ def train_epoch(model, training_data, crit, optimizer, all_steps, interval=5):
         n_total_words += n_words.item()
         n_total_correct += n_correct.item()
         total_loss += loss.item()
-
-        if step % interval == 0:
-            print("[Training] step: %6d/%d, learning rate: %4.6f, CELoss: %8.5f " % (optimizer.n_current_steps, all_steps, optimizer.current_lr, loss.item()))
-        
-        if step > 10:
+        if i > 10:
             break
 
     return total_loss / n_total_words, n_total_correct / n_total_words
 
 
-def eval_epoch(model, validation_data, crit, all_steps, interval=100):
+def eval_epoch(model, validation_data, crit):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()
@@ -87,12 +85,12 @@ def eval_epoch(model, validation_data, crit, all_steps, interval=100):
     total_loss = 0
     n_total_words = 0
     n_total_correct = 0
-    
-    for step, batch in enumerate(validation_data):
+
+    for i, batch in enumerate(validation_data):
 
         # prepare data
         src, tgt = batch
-        gold = tgt[0][:, 1:].to(DEVICE)
+        gold = tgt[0][:, 1:]
 
         # forward
         pred = model(src, tgt)
@@ -103,12 +101,7 @@ def eval_epoch(model, validation_data, crit, all_steps, interval=100):
         n_total_words += n_words.item()
         n_total_correct += n_correct.item()
         total_loss += loss.item()
-
-        if step % interval == 0:
-            print("[Validating] step: %6d/%d, CELoss: %8.5f " % (step, all_steps, loss.item()))
-
-        if step > 10:        
-            break
+        break
 
     return total_loss / n_total_words, n_total_correct / n_total_words
 
@@ -127,28 +120,26 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
             log_train_file, log_valid_file))
 
         with open(log_train_file, 'w') as log_tf, open(log_valid_file, 'w') as log_vf:
-            log_tf.write('epoch,loss,CELOSS,accuracy\n')
-            log_vf.write('epoch,loss,CELOSS,accuracy\n')
+            log_tf.write('epoch,loss,CELoss,accuracy\n')
+            log_vf.write('epoch,loss,CELoss,accuracy\n')
 
     valid_accus = []
     for epoch_i in range(opt.epoch):
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
-        all_train_steps = opt.epoch * math.floor(training_data.n_insts / opt.batch_size)
         train_loss, train_accu = train_epoch(
-            model, training_data, crit, optimizer, all_train_steps, interval=opt.print_interval)
-        print('  - (Training)   CELOSS: {CELOSS: 8.5f}, accuracy: {accu:3.3f} %, '
+            model, training_data, crit, optimizer)
+        print('  - (Training)   CELoss: {CELoss: 8.5f}, accuracy: {accu:3.3f} %, '
               'elapse: {elapse:3.3f} min'.format(
-                  CELOSS=train_loss, accu=100 * train_accu,
+                  CELoss=train_loss, accu=100 * train_accu,
                   elapse=(time.time() - start) / 60))
 
         start = time.time()
-        all_dev_steps = opt.epoch * math.floor(validation_data.n_insts / opt.batch_size)
-        valid_loss, valid_accu = eval_epoch(model, validation_data, crit, all_dev_steps, interval=opt.print_interval)
-        print('  - (Validation) CELOSS: {CELOSS: 8.5f}, accuracy: {accu:3.3f} %, '
+        valid_loss, valid_accu = eval_epoch(model, validation_data, crit)
+        print('  - (Validation) CELoss: {CELoss: 8.5f}, accuracy: {accu:3.3f} %, '
               'elapse: {elapse:3.3f} min'.format(
-                  CELOSS=valid_loss, accu=100 * valid_accu,
+                  CELoss=valid_loss, accu=100 * valid_accu,
                   elapse=(time.time() - start) / 60))
 
         valid_accus += [valid_accu]
@@ -172,12 +163,12 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
 
         if log_train_file and log_valid_file:
             with open(log_train_file, 'a') as log_tf, open(log_valid_file, 'a') as log_vf:
-                log_tf.write('{epoch},{loss: 8.5f},{CELOSS: 8.5f},{accu:3.3f}\n'.format(
+                log_tf.write('{epoch},{loss: 8.5f},{CELoss: 8.5f},{accu:3.3f}\n'.format(
                     epoch=epoch_i, loss=train_loss,
-                    CELOSS=train_loss, accu=100 * train_accu))
-                log_vf.write('{epoch},{loss: 8.5f},{CELOSS: 8.5f},{accu:3.3f}\n'.format(
+                    CELoss=math.exp(min(train_loss, 100)), accu=100 * train_accu))
+                log_vf.write('{epoch},{loss: 8.5f},{CELoss: 8.5f},{accu:3.3f}\n'.format(
                     epoch=epoch_i, loss=valid_loss,
-                    CELOSS=valid_loss, accu=100 * valid_accu))
+                    CELoss=math.exp(min(valid_loss, 100)), accu=100 * valid_accu))
 
 
 def main():
@@ -197,12 +188,11 @@ def main():
 
     parser.add_argument('-n_head', type=int, default=8)
     parser.add_argument('-n_layers', type=int, default=6)
-    parser.add_argument('-n_warmup_steps', type=int, default=4000)
+    parser.add_argument('-n_warmup_steps', type=int, default=400)
 
     parser.add_argument('-dropout', type=float, default=0.1)
 
     parser.add_argument('-log', default=None)
-    parser.add_argument('-print_interval', type=int, default=5)
     parser.add_argument('-save_model', default='./exp')
     parser.add_argument('-save_mode', type=str,
                         choices=['all', 'best'], default='best')
@@ -215,11 +205,11 @@ def main():
 
     #========= Preparing DataLoader =========#
     training_data = DataLoader(
-        'train', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'train', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     validation_data = DataLoader(
-        'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'dev', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     test_data = DataLoader(
-        'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'test', config, DEVICE, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
 
     #========= Preparing Model =========#
 
@@ -235,6 +225,9 @@ def main():
         training_data.outputs_max_seq_lengths,
         validation_data.outputs_max_seq_lengths,
         test_data.outputs_max_seq_lengths)
+    print('*************************')
+    print('The max length of inputs is %d:' % n_inputs_max_seq)
+    print('The max length of targets is %d' % n_outputs_max_seq)
 
     transformer = Transformer(
         input_dim,
@@ -262,7 +255,7 @@ def main():
         ''' With PAD token zero weight '''
         weight = torch.ones(output_dim)
         weight[Constants.PAD] = 0
-        return nn.CrossEntropyLoss(weight)
+        return nn.CrossEntropyLoss(weight, size_average=False)
 
     crit = get_criterion(training_data.vocab_size)
 
