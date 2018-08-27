@@ -9,26 +9,28 @@ import torch
 import numpy as np
 import transformer.Constants as Constants
 
+
 class Beam(object):
     ''' Store the neccesary info for beam search. '''
 
-    def __init__(self, size, cuda=False):
+    def __init__(self, size, device):
 
         self.size = size
         self.done = False
 
-        self.tt = torch.cuda if cuda else torch
+        self.device = device
 
         # The score for each translation on the beam.
-        self.scores = self.tt.FloatTensor(size).zero_()
+        self.scores = torch.FloatTensor(size).zero_().to(device)
         self.all_scores = []
 
         # The backpointers at each time-step.
         self.prev_ks = []
 
         # The outputs at each time-step.
-        self.next_ys = [self.tt.LongTensor(size).fill_(Constants.PAD)]
-        self.next_ys[0][0] = Constants.BOS
+        self.next_ys = [torch.LongTensor(size).fill_(Constants.PAD).to(device)]
+        for i in range(size):
+            self.next_ys[0][i] = Constants.BOS
 
     def get_current_state(self):
         "Get the outputs for the current timestep."
@@ -50,8 +52,10 @@ class Beam(object):
 
         flat_beam_lk = beam_lk.view(-1)
 
-        best_scores, best_scores_id = flat_beam_lk.topk(self.size, 0, True, True) # 1st sort
-        best_scores, best_scores_id = flat_beam_lk.topk(self.size, 0, True, True) # 2nd sort
+        best_scores, best_scores_id = flat_beam_lk.topk(
+            self.size, 0, True, True)  # 1st sort
+        best_scores, best_scores_id = flat_beam_lk.topk(
+            self.size, 0, True, True)  # 2nd sort
 
         self.all_scores.append(self.scores)
         self.scores = best_scores
@@ -106,7 +110,7 @@ class Beam(object):
         """
         hyp = []
         for j in range(len(self.prev_ks) - 1, -1, -1):
-            hyp.append(self.next_ys[j+1][k])
+            hyp.append(self.next_ys[j + 1][k])
             k = self.prev_ks[j][k]
 
         return hyp[::-1]

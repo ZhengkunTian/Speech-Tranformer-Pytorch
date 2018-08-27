@@ -101,7 +101,7 @@ class Decoder(nn.Module):
 
     def __init__(
             self, output_dim, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
-            d_model=512, d_inner_hid=1024, dropout=0.1, device="cpu"):
+            d_model=512, d_inner_hid=1024, dropout=0.1, device="cpu", is_train=True):
 
         super(Decoder, self).__init__()
         n_position = n_max_seq + 1
@@ -152,7 +152,8 @@ class Decoder(nn.Module):
         dec_slf_attn_mask = torch.gt(
             dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
         # mask去掉在输入序列长度之后的信息
-        dec_enc_attn_pad_mask = get_attn_padding_mask(outputs_data, input_pos).to(self.device)
+        dec_enc_attn_pad_mask = get_attn_padding_mask(
+            outputs_data, input_pos).to(self.device)
 
         if return_attns:
             dec_slf_attns, dec_enc_attns = [], []
@@ -181,7 +182,7 @@ class Transformer(nn.Module):
     def __init__(
             self, input_dim, output_dim, n_inputs_max_seq, n_outputs_max_seq, n_layers=6,
             n_head=8, d_model=512, d_inner_hid=1024, d_k=64, d_v=64,
-            dropout=0.1, device="cpu"):
+            dropout=0.1, device="cpu", scheduled_sample_ratio=0.5, is_train=True):
 
         super(Transformer, self).__init__()
         self.encoder = Encoder(
@@ -189,10 +190,12 @@ class Transformer(nn.Module):
             d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout, device=device)
         self.decoder = Decoder(
             output_dim, n_outputs_max_seq, n_layers=n_layers, n_head=n_head,
-            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout, device=device)
+            d_model=d_model, d_inner_hid=d_inner_hid, dropout=dropout, device=device, is_train=is_train)
         self.tgt_word_proj = Linear(d_model, output_dim, bias=False)
         self.dropout = nn.Dropout(dropout)
-
+        self.is_train = is_train
+        self.scheduled_sample_ratio = scheduled_sample_ratio
+        self.device = device
         # assert d_model == d_word_vec, \
         #     'To facilitate the residual connections, \
         #  the dimensions of all module output shall be the same.'
@@ -206,16 +209,50 @@ class Transformer(nn.Module):
         freezed_param_ids = enc_freezed_param_ids | dec_freezed_param_ids
         return (p for p in self.parameters() if id(p) not in freezed_param_ids)
 
-    def forward(self, inputs, targets):
-        src_seq, src_pos = inputs
-        tgt_seq, tgt_pos = targets
+    def forward(self, src, tgt):
+        src_seq, src_pos = src
+        tgt_seq, tgt_pos = tgt
 
         tgt_seq = tgt_seq[:, :-1]
         tgt_pos = tgt_pos[:, :-1]
 
         enc_output, *_ = self.encoder(src_seq, src_pos)
 
-        dec_output, *_ = self.decoder(tgt_seq, tgt_pos, src_pos, enc_output)
+        if random.random() < self.scheduled_sample_ratio:
+            use_output_as_input = True
+        else:
+            use_output_as_input = False
+
+        batch_size = tgt_seq.size(0)
+        if self.is_train and use_output_as_input:
+            model_output = [
+                np.array([Constants.BOS] * batch_size).reshape(batch_size, 1)]
+            for i in range(tgt_seq.size(1)):
+                len_dec_seq = i + 1
+                dec_partial_seq = torch.LongTensor(
+                    np.column_stack(model_output))
+                dec_partial_seq = dec_partial_seq.view(-1, len_dec_seq)
+
+                dec_partial_pos = torch.arange(1, len_dec_seq + 1).unsqueeze(0)
+                dec_partial_pos = dec_partial_pos.repeat(batch_size, 1).long()
+
+                dec_partial_seq = dec_partial_seq.to(self.device)
+                dec_partial_pos = dec_partial_pos.to(self.device)
+
+                # -- Decoding -- #
+                dec_output, *_ = self.decoder(
+                    dec_partial_seq, dec_partial_pos, src_pos, enc_output)
+
+                dec_last_output = dec_output[:, -1, :]
+                dec_last_output = self.tgt_word_proj(dec_last_output)
+
+                out = self.prob_projection(dec_last_output)
+                model_output.append(out.topk(1)[1].view(batch_size, 1).numpy())
+
+        else:
+            dec_output, * \
+                _ = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output)
+
         seq_logit = self.tgt_word_proj(dec_output)
 
         return seq_logit.view(-1, seq_logit.size(2))
