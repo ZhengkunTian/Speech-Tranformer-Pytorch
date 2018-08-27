@@ -71,8 +71,9 @@ def train_epoch(model, training_data, crit, optimizer, all_steps, interval=5):
         total_loss += loss.item()
 
         if step % interval == 0:
-            print("[Training] step: %6d/%d, learning rate: %4.6f, CELoss: %8.5f " % (optimizer.n_current_steps, all_steps, optimizer.current_lr, loss.item()))
-        
+            print("[Training] step: %6d/%d, learning rate: %4.6f, CELoss: %8.5f " %
+                  (optimizer.n_current_steps, all_steps, optimizer.current_lr, loss.item()))
+
         if step > 10:
             break
 
@@ -87,7 +88,7 @@ def eval_epoch(model, validation_data, crit, all_steps, interval=100):
     total_loss = 0
     n_total_words = 0
     n_total_correct = 0
-    
+
     for step, batch in enumerate(validation_data):
 
         # prepare data
@@ -105,9 +106,10 @@ def eval_epoch(model, validation_data, crit, all_steps, interval=100):
         total_loss += loss.item()
 
         if step % interval == 0:
-            print("[Validating] step: %6d/%d, CELoss: %8.5f " % (step, all_steps, loss.item()))
+            print("[Validating] step: %6d/%d, CELoss: %8.5f " %
+                  (step, all_steps, loss.item()))
 
-        if step > 10:        
+        if step > 10:
             break
 
     return total_loss / n_total_words, n_total_correct / n_total_words
@@ -135,7 +137,8 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
         print('[ Epoch', epoch_i, ']')
 
         start = time.time()
-        all_train_steps = opt.epoch * math.floor(training_data.n_insts / opt.batch_size)
+        all_train_steps = opt.epoch * \
+            math.floor(training_data.n_insts / opt.batch_size)
         train_loss, train_accu = train_epoch(
             model, training_data, crit, optimizer, all_train_steps, interval=opt.print_interval)
         print('  - (Training)   CELOSS: {CELOSS: 8.5f}, accuracy: {accu:3.3f} %, '
@@ -144,8 +147,10 @@ def train(model, training_data, validation_data, crit, optimizer, opt):
                   elapse=(time.time() - start) / 60))
 
         start = time.time()
-        all_dev_steps = opt.epoch * math.floor(validation_data.n_insts / opt.batch_size)
-        valid_loss, valid_accu = eval_epoch(model, validation_data, crit, all_dev_steps, interval=opt.print_interval)
+        all_dev_steps = opt.epoch * \
+            math.floor(validation_data.n_insts / opt.batch_size)
+        valid_loss, valid_accu = eval_epoch(
+            model, validation_data, crit, all_dev_steps, interval=opt.print_interval)
         print('  - (Validation) CELOSS: {CELOSS: 8.5f}, accuracy: {accu:3.3f} %, '
               'elapse: {elapse:3.3f} min'.format(
                   CELOSS=valid_loss, accu=100 * valid_accu,
@@ -200,7 +205,7 @@ def main():
     parser.add_argument('-n_warmup_steps', type=int, default=4000)
 
     parser.add_argument('-dropout', type=float, default=0.1)
-
+    parser.add_argument('-scheduled_sample_ratio', type=int, default=0.5)
     parser.add_argument('-log', default=None)
     parser.add_argument('-print_interval', type=int, default=5)
     parser.add_argument('-save_model', default='./exp')
@@ -217,7 +222,7 @@ def main():
     training_data = DataLoader(
         'train', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     validation_data = DataLoader(
-        'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
+        'dev', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
     test_data = DataLoader(
         'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate)
 
@@ -248,7 +253,8 @@ def main():
         n_layers=opt.n_layers,
         n_head=opt.n_head,
         dropout=opt.dropout,
-        device=DEVICE)
+        device=DEVICE,
+        scheduled_sample_ratio=opt.scheduled_sample_ratio)
 
     # print(transformer)
 

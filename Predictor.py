@@ -2,10 +2,9 @@
 
 import torch
 import argparse
-from tqdm import tqdm
-from transformer.Translator import Translator
+import configparser
+from transformer.Decode import Decode
 from DataLoader import DataLoader
-from preprocess import read_instances_from_file, convert_instance_to_idx_seq
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -17,10 +16,6 @@ def main():
 
     parser.add_argument('-model', required=True,
                         help='Path to model .pt file')
-    parser.add_argument('-src', required=True,
-                        help='Source sequence to decode (one line per sequence)')
-    parser.add_argument('-vocab', required=True,
-                        help='Source sequence to decode (one line per sequence)')
     parser.add_argument('-output', default='pred.txt',
                         help="""Path to output the predictions (each line will
                         be the decoded sequence""")
@@ -31,39 +26,39 @@ def main():
     parser.add_argument('-n_best', type=int, default=1,
                         help="""If verbose is set, will output the n_best
                         decoded sentences""")
-    parser.add_argument('-no_cuda', action='store_true')
 
     opt = parser.parse_args()
-    opt.cuda = not opt.no_cuda
+
+    # load config
+    cfg_path = './config/transformer.cfg'
+    config = configparser.ConfigParser()
+    config.read(cfg_path)
 
     # Prepare DataLoader
-    preprocess_data = torch.load(opt.vocab)
-    preprocess_settings = preprocess_data['settings']
-    test_src_word_insts = read_instances_from_file(
-        opt.src,
-        preprocess_settings.max_word_seq_len,
-        preprocess_settings.keep_case)
-    test_src_insts = convert_instance_to_idx_seq(
-        test_src_word_insts, preprocess_data['dict']['src'])
     test_data = DataLoader(
-        preprocess_data['dict']['src'],
-        preprocess_data['dict']['tgt'],
-        src_insts=test_src_insts,
-        cuda=opt.cuda,
-        shuffle=False,
-        batch_size=opt.batch_size)
+        'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate, return_target=False)
 
-    translator = Translator(opt)
-    translator.model.eval()
+    opt.input_dim = test_data.features_dim
+    opt.output_dim = test_data.vocab_size
+    opt.n_inputs_max_seq = test_data.inputs_max_seq_lengths
+    opt.n_outputs_max_seq = test_data.outputs_max_seq_lengths
+
+    decoder = Decode(opt, device)
+    decoder.model.eval()
 
     with open(opt.output, 'w') as f:
-        for batch in tqdm(test_data, mininterval=2, desc='  - (Test)', leave=False):
-            all_hyp, all_scores = translator.translate_batch(batch)
+        for step, batch in enumerate(test_data):
+            all_hyp, all_scores = decoder.decode_batch(batch)
+            idx_in_batch = 0
             for idx_seqs in all_hyp:
                 for idx_seq in idx_seqs:
-                    pred_line = ' '.join(
-                        [test_data.tgt_idx2word[idx] for idx in idx_seq])
+                    idx_seq = [idx.item() for idx in idx_seq]
+                    pred_line = test_data.target_coder.decode(idx_seq)
                     f.write(pred_line + '\n')
+                    print('Index: %d  Decode Sequence: %s' %
+                          (step + idx_in_batch, pred_line))
+                idx_in_batch += 1
+
     print('[Info] Finished.')
 
 if __name__ == "__main__":
