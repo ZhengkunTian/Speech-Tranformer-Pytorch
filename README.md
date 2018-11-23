@@ -30,7 +30,7 @@ python predict.py -load_model model.chkpt -wav example.wav
 ```
 Or, if you want to recognize a list of wav file, please type:
 ```python
-python predict.py -load_model model.chkpt -wavscp wav.scp --output decoded.txt
+python predict.py -load_model model.chkpt -wavscp wav.scp -output decoded.txt
 ```
 ## Done
 - [x] Self-Attention
