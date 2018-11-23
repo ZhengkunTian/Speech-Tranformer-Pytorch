@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import kaldi_io
 import codecs
+import time
 
 __author__ = "Zhengkun Tian"
 
@@ -151,6 +152,7 @@ class KaldiFeaturesLoader(DataLoader):
         self.apply_cmvn = apply_cmvn
         self.cmvn_file = cmvn_file
         self.data_list = []
+        self.remain = []
         if self.apply_cmvn:
             self.cmvn_stats_dict = {}
             self.get_cmvn_dict()
@@ -170,12 +172,20 @@ class KaldiFeaturesLoader(DataLoader):
         return np.divide(np.subtract(mat, mean), np.sqrt(variance))
 
     def get_batch(self):
+        self.data_list = []
         while len(self.data_list) < self.batch_size:
+            # check if there are remained data pairs in last epoch
+            if len(self.remain) > 0:
+                self.data_list = self.remain
+                self.remain = []
+
             try:
                 utt_id, mat = next(self.feature_reader)
-            except:
+            except StopIteration:
+                self.remain = self.data_list
                 self.stop_iteration = True
                 raise StopIteration
+                break
 
             if self.apply_cmvn:
                 spkid = self.extract_spk(utt_id)
@@ -214,18 +224,3 @@ class KaldiFeaturesLoader(DataLoader):
 
     def reset(self):
         self.feature_reader = kaldi_io.read_mat_scp(self.scpfile)
-
-
-if __name__ == '__main__':
-    scpfile = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/feats.scp'
-    targets_file = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/character'
-    vocab_file = '/data1/tianzhengkun/data/aishell/data_aishell/transcript/simple_vocab'
-    cmvn_file = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/cmvn.scp'
-    vocab_size = 3004
-    loader = KaldiFeaturesLoader('train', 4, scpfile, targets_file, vocab_file, vocab_size, apply_cmvn=True, cmvn_file=cmvn_file,\
-                left_context_width=3, right_context_width=1, frame_rate=30, shuffle=True)
-    count = 0
-    for step, batch in enumerate(loader):
-        # print(batch)
-        count += 1
-    print(count)
