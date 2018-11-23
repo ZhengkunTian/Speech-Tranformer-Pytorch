@@ -5,12 +5,9 @@ import torch
 import kaldi_io
 import codecs
 import time
+from transformer.Constants import BOS, EOS, UNK
 
 __author__ = "Zhengkun Tian"
-
-BOS = '<S>'
-EOS = '</S>'
-UNK = '<UNK>'
 
 class DataLoader(object):
     ''' Load  '''
