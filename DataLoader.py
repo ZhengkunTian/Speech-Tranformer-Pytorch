@@ -1,268 +1,231 @@
 ''' Data Loader class for training iteration '''
 import random
-import math
 import numpy as np
 import torch
-import transformer.Constants as Constants
-from processing import feature_reader
-from processing import prepare_data
-from processing import target_coder
-from processing import target_normalizers
+import kaldi_io
+import codecs
 
 __author__ = "Zhengkun Tian"
 
+BOS = '<S>'
+EOS = '</S>'
+UNK = '<UNK>'
 
 class DataLoader(object):
-    ''' For data iteration '''
+    ''' Load  '''
 
-    def __init__(self, data_name, config, batch_size=4, context_width=0, frame_rate=10, shuffle=True, return_target=True, pad_to_max_len=False, return_numpy=False):
-
-        feat_dir = config.get('directories', '%s_features' %
-                              data_name) + '/' + config.get('dnn-features', 'name')
-
-        textfile = config.get('directories', '%s_data' % data_name) + '/text'
+    def __init__(self, data_name, batch_size, targets_file, vocab_file, vocab_size, left_context_width=0, right_context_width=0, frame_rate=10):
 
         self.data_name = data_name
-
-        self.conf = dict(config.items('dnn-features'))
-
-        self.train = True if data_name == 'train' else False
-
-        with open(feat_dir + '/maxlength', 'r') as fid:
-            self.max_input_length = int(fid.read())
-
-        self.context_width = context_width
-
+        self.batch_size = batch_size
+        self.left_context_width = left_context_width
+        self.right_context_width = right_context_width
         self.frame_rate = frame_rate
+        self.vocab_file = vocab_file
+        self.vocab_size = vocab_size
+        self.targets_file = targets_file
+        self.stop_iteration = False
+        self.get_vocab_map()
+        self.get_targets_dict()
 
-        self.feature_reader = feature_reader.FeatureReader(
-            feat_dir + '/feats.scp', feat_dir + '/cmvn.scp',
-            feat_dir + '/utt2spk', context_width, self.max_input_length, frame_rate)
+    def get_vocab_map(self):
+        self.unit2idx = {}
+        with codecs.open(self.vocab_file, 'r', encoding='utf-8') as fid:
+            idx = 0
+            for line in fid:
+                unit = line.strip()
+                self.unit2idx[unit] = idx
+                idx += 1
+        assert self.vocab_size == len(self.unit2idx)
 
-        self.num_utt = self.feature_reader.num_utt
-
-        self._batch_size = batch_size
-        self._n_batch = int(np.ceil(self.num_utt / self._batch_size))
-
-        self._iter_count = 0
-
-        self.target_dict, self._outputs_max_seq_lengths = self.read_target_file(
-            textfile)
-
-        self.target_coder = target_coder.ChinesePhoneEncoder(
-            target_normalizers.SosEosNorm)
-
-        self._need_shuffle = shuffle
-
-        self._data_path = feat_dir
-
-        self.return_target = return_target
-
-        self.pad_to_max_len = pad_to_max_len
-
-        self.return_numpy = return_numpy
-
-        if self._need_shuffle:
-            self.shuffle()
-
-        self.get_info()
-
-    @property
-    def n_insts(self):
-        ''' Property for dataset size '''
-        return self.num_utt
-
-    @property
-    def vocab_size(self):
-        '''the number of output labels'''
-
-        return self.target_coder.num_labels
-
-    @property
-    def inputs_max_seq_lengths(self):
-        max_seq_length = math.ceil(
-            float(self.max_input_length) / (self.frame_rate / 10))
-        return max_seq_length
-
-    @property
-    def outputs_max_seq_lengths(self):
-        return self._outputs_max_seq_lengths
-
-    @property
-    def features_dim(self):
-        dim = int(self.conf['nfilt'])
-        include_energy = 1 if bool(self.conf['include_energy']) else 0
-        dd = 2 if self.conf['dynamic'] == 'ddelta' else 0
-        d = 1 if self.conf['dynamic'] == 'delta' else 0
-        self._features_dim = (2 * self.context_width + 1) * \
-            (dim + include_energy) * (1 + dd + d)
-
-        return self._features_dim
-
-    @property
-    def tagter_coder(self):
-        return tagter_coder
-
-
-    def shuffle(self):
-        ''' Shuffle data for a brand new start '''
-        prepare_data.shuffle_examples(self._data_path)
+    def get_targets_dict(self):
+        self.targets_dict = {}
+        with codecs.open(self.targets_file, 'r', encoding='utf-8') as fid:
+            for line in fid:
+                parts = line.strip().split(' ')
+                utt_id = parts[0]
+                labels = self.encode(parts[1:])
+                self.targets_dict[utt_id] = np.array(labels)
 
     def __iter__(self):
+        self.reset()
+        self.stop_iteration = False
         return self
 
     def __next__(self):
         return self.next()
 
-    def __len__(self):
-        return self._n_batch
+    def next(self):
+        while not self.stop_iteration:
+            return self.get_batch()
+
+    def encode(self, seq):
+        seq.insert(0, BOS)
+        seq.append(EOS)
+        encoded_seq = []
+        for unit in seq:
+            if unit in self.unit2idx:
+                encoded_seq.append(self.unit2idx[unit])
+            else:
+                encoded_seq.append(self.unit2idx[UNK])
+        return encoded_seq
 
     def get_batch(self):
-        '''
-        Get a batch of features and targets.
+        raise NotImplementedError
 
-        Returns:
-            A pair containing:
-                - The features: a list of feature matrices
-                - The targets: a list of target vectors
-        '''
-
-        # set up the data lists.
-        batch_inputs = []
-        batch_targets = []
-        # print(self._batch_size)
-        while len(batch_inputs) < self._batch_size:
-            # read utterance
-            utt_id, utt_mat, _ = self.feature_reader.get_utt()
-
-            # get transcription
-            if utt_id in self.target_dict:
-                targets = self.target_dict[utt_id]
-                # print(utt_id)
-                encoded_targets = self.target_coder.encode(targets)
-                batch_inputs.append(utt_mat)
-                batch_targets.append(encoded_targets)
-            else:
-                print('WARNING no targets for %s' % utt_id)
-
-        return batch_inputs, batch_targets
-
-    def next(self):
-        ''' Get the next batch '''
-
-        def pad_to_longest(insts, is_label=False, pad_to_max_len=False):
-            ''' Pad the instance to the max seq length in batch '''
-            # print(len(insts[0]))
-            if not pad_to_max_len:
-                max_len = max(inst.shape[0] for inst in insts)
-            else:
-                if is_label:
-                    max_len = self.outputs_max_seq_lengths
-                else:
-                    max_len = self.inputs_max_seq_lengths
-
-            dim = insts[0].shape[-1]
-            insts_data = []
-            insts_position = []
-            for i in range(len(insts)):
-                if not is_label:
-                    pad_zeros_mat = np.zeros(
-                        [max_len - insts[i].shape[0], dim], dtype=np.int16)
-                    insts_data.append(np.row_stack([insts[i], pad_zeros_mat]))
-                    insts_data[i] = insts_data[i][np.newaxis, :]
-
-                else:
-                    pad_zeros_mat = np.zeros(
-                        [1, max_len - insts[i].shape[0]], dtype=np.int16)
-                    insts_data.append(insts[i][np.newaxis, :])
-                    insts_data[i] = np.column_stack(
-                        [insts_data[i], pad_zeros_mat])
-
-                inst_pos = np.arange(1, len(insts[i]) + 1, 1).reshape(1, -1)
-                inst_pos_pad = np.zeros(
-                    [1, max_len - inst_pos.shape[1]], dtype=np.int16)
-                insts_position.append(
-                    np.column_stack([inst_pos, inst_pos_pad]))
-
-            inst_data = np.row_stack(insts_data)
-            inst_position = np.row_stack(insts_position)
-
-            if not self.return_numpy:
-                if not is_label:
-                    inst_data_tensor = torch.FloatTensor(
-                        inst_data)
-                else:
-                    inst_data_tensor = torch.LongTensor(
-                        inst_data)
-                inst_position_tensor = torch.LongTensor(
-                    inst_position)
-            else:
-                inst_data_tensor = inst_data
-                inst_position_tensor = inst_position
-
-            return inst_data_tensor, inst_position_tensor
-
-        if self._iter_count < self._n_batch:
-            self._iter_count += 1
-
-            batch_inputs, batch_targets = self.get_batch()
-            inputs_data, inputs_pos = pad_to_longest(
-                batch_inputs, is_label=False, pad_to_max_len=self.pad_to_max_len)
-
-            if not self.return_target:
-                return inputs_data, inputs_pos
-            else:
-                target_data, target_pos = pad_to_longest(
-                    batch_targets, is_label=True, pad_to_max_len=self.pad_to_max_len)
-                return (inputs_data, inputs_pos), (target_data, target_pos)
-
-        else:
-            self.feature_reader.reset_reader()
-
-            if self._need_shuffle:
-                self.shuffle()
-
-            self._iter_count = 0
-            raise StopIteration()
-
-    def read_target_file(self, target_path):
-        '''
-        read the file containing the text sequences
-
-        Args:
-            target_path: path to the text file
-
-        Returns:
-            A dictionary containing
-                - Key: Utterance ID
-                - Value: The target sequence as a string
-        '''
-
-        target_dict = {}
+    def position_encoding(self, inputs):
         max_len = 0
-        with open(target_path, 'r', encoding='utf-8') as fid:
-            for line in fid:
-                splitline = line.strip().split(' ')
-                tmp_len = max(len(splitline) + 2, max_len)
-                max_len = tmp_len
-                target_dict[splitline[0]] = ' '.join(splitline[1:])
+        inputs_pos = []
+        for item in inputs:
+            length = len(item)
+            max_len = max(length, max_len)
+            inputs_pos.append(np.arange(length))
+        inputs_pos = self.pad(inputs_pos)
+        return inputs_pos
 
-        return target_dict, max_len
+    def pad(self, inputs):
+        dim = len(inputs[0].shape)
+        max_len = max([inputs[i].shape[0] for i in range(len(inputs))])
+        inst_data = []
+        if dim == 1:
+            for inst in inputs:
+                pad_zeros_mat = np.zeros([1, max_len - inst.shape[0]])
+                inst_data.append(np.column_stack([inst.reshape(1, -1), pad_zeros_mat]))
+        elif dim == 2:
+            feature_dim = inputs[0].shape[1]
+            for inst in inputs:
+                pad_zeros_mat = np.zeros([max_len-inst.shape[0], feature_dim])
+                inst_data.append(np.row_stack([inst, pad_zeros_mat]).reshape(1, -1, feature_dim))
+        else:
+            raise AssertionError('Features in inputs list must be one vector or two dimension matrix! ')
+        padded_data = np.row_stack(inst_data)
+        return padded_data
 
-    def reset_loader(self):
+    def concat_frame(self, features):
 
-        self.feature_reader.reset_reader()
-        if self._need_shuffle:
-            self.shuffle()
+        time_steps, features_dim = features.shape
+        concated_features = np.zeros(
+            shape=[time_steps, features_dim * (1 + self.left_context_width + self.right_context_width)],
+            dtype=np.float32)
 
-        self._iter_count = 0
-    
+        # middle part is just the uttarnce
+        concated_features[:, self.left_context_width * features_dim:
+                    (self.left_context_width + 1) * features_dim] = features
 
-    def get_info(self):
-        print('**********************************')
-        print('There are %d utts in %s set!' % (self.n_insts, self.data_name))
-        print('The size of Vocab is %d' % self.vocab_size)
-        print('The number of utterance is %d' % self.n_insts)
-        print('The max length of input is %d' % self.inputs_max_seq_lengths)
-        print('The max length of target is %d' % self.outputs_max_seq_lengths)
-        print('The dimsion of feature is %d' % self.features_dim)
+        for i in range(self.left_context_width):
+            # add left context
+            concated_features[i + 1:time_steps,
+                        (self.left_context_width - i - 1) * features_dim:
+                        (self.left_context_width - i) * features_dim] = features[0:time_steps - i - 1, :]
+
+        for i in range(self.right_context_width):
+            # add right context
+            concated_features[0:time_steps - i - 1,
+                        (self.right_context_width + i + 1) * features_dim:
+                        (self.right_context_width + i + 2) * features_dim] = features[i + 1:time_steps, :]
+
+        return concated_features
+
+    def subsampling(self, features):
+        if self.frame_rate !=0:
+            interval = int(self.frame_rate / 10)
+            temp_mat = [features[i]
+                        for i in range(0, features.shape[0], interval)]
+            subsampled_features = np.row_stack(temp_mat)
+            return subsampled_features
+        else:
+            return features
+
+    def reset(self):
+        raise NotImplementedError
+
+
+class KaldiFeaturesLoader(DataLoader):
+    def __init__(self, data_name, batch_size, scpfile, targets_file, vocab_file, vocab_size, apply_cmvn=False, cmvn_file=None,\
+                left_context_width=0, right_context_width=0, frame_rate=10, shuffle=True):
+        super(KaldiFeaturesLoader, self).__init__(data_name, batch_size, targets_file, \
+                vocab_file, vocab_size, left_context_width, right_context_width, frame_rate)
+
+        self.scpfile = scpfile
+        self.shuffle = shuffle
+        self.apply_cmvn = apply_cmvn
+        self.cmvn_file = cmvn_file
+        self.data_list = []
+        if self.apply_cmvn:
+            self.cmvn_stats_dict = {}
+            self.get_cmvn_dict()
+
+    def extract_spk(self, uttid):
+        # specific for aishell
+        return uttid[6:-5]
+
+    def get_cmvn_dict(self):
+        cmvn_reader = kaldi_io.read_mat_scp(self.cmvn_file)
+        for spkid, stats in cmvn_reader:
+            self.cmvn_stats_dict[spkid] = stats
+
+    def cmvn(self, mat, stats):
+        mean = stats[0, :-1] / stats[0, -1]
+        variance = stats[1, :-1] / stats[0, -1] - np.square(mean)
+        return np.divide(np.subtract(mat, mean), np.sqrt(variance))
+
+    def get_batch(self):
+        while len(self.data_list) < self.batch_size:
+            try:
+                utt_id, mat = next(self.feature_reader)
+            except:
+                self.stop_iteration = True
+                raise StopIteration
+
+            if self.apply_cmvn:
+                spkid = self.extract_spk(utt_id)
+                stats = self.cmvn_stats_dict[spkid]
+                mat = self.cmvn(mat, stats)
+
+            concated_mat = self.concat_frame(mat)
+            mat = self.subsampling(concated_mat)
+
+            labels = self.targets_dict[utt_id]
+            self.data_list.append((mat, labels))
+
+        assert len(self.data_list) == self.batch_size
+
+        if self.shuffle:
+            random.shuffle(self.data_list)
+
+        features, targets = [], []
+        for (mat, labels) in self.data_list:
+            features.append(mat)
+            targets.append(labels)
+
+        inputs_pos = self.position_encoding(features)
+        targets_pos = self.position_encoding(targets)
+
+        padded_features = self.pad(features)
+        padded_targets = self.pad(targets)
+
+        return {
+            'inputs': torch.FloatTensor(padded_features).size(),
+            'inputs_pos': torch.LongTensor(inputs_pos).size(),
+            'targets': torch.LongTensor(padded_targets).size(),
+            'targets_pos': torch.LongTensor(targets_pos).size(),
+            'transcripts': targets
+        }
+
+    def reset(self):
+        self.feature_reader = kaldi_io.read_mat_scp(self.scpfile)
+
+
+if __name__ == '__main__':
+    scpfile = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/feats.scp'
+    targets_file = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/character'
+    vocab_file = '/data1/tianzhengkun/data/aishell/data_aishell/transcript/simple_vocab'
+    cmvn_file = '/data1/tianzhengkun/kaldi/egs/aishell/s5/data/test/cmvn.scp'
+    vocab_size = 3004
+    loader = KaldiFeaturesLoader('train', 4, scpfile, targets_file, vocab_file, vocab_size, apply_cmvn=True, cmvn_file=cmvn_file,\
+                left_context_width=3, right_context_width=1, frame_rate=30, shuffle=True)
+    count = 0
+    for step, batch in enumerate(loader):
+        # print(batch)
+        count += 1
+    print(count)
