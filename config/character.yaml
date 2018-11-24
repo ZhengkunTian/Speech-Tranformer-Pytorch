@@ -1,0 +1,49 @@
+# "character", "word" or "phoneme"
+units_type: character
+# "kaldi" or "online"
+feature_source: kaldi
+# 'mfcc' of 'fbank'
+feature_type: fbank
+# vocab_size is equal to the size of vocabulary plus 4(<pad> <unk> <sos> <eos>)
+data:
+    vocab: ./data/vocab
+    context_width: 0
+    frame_rate: 10
+    apply_cmvn: True
+    batch_size: 64
+    train:
+        # wavscp: /data/train/wav.scp
+        arkscp: ./data/train/feats.scp
+        text: ./data/train/character
+        cmvnscp: ./data/train/cmvn.scp
+    dev:
+        arkscp: ./data/dev/feats.scp
+        text: ./data/dev/character
+        cmvnscp: ./data/dev/cmvn.scp
+model:
+    vocab_size: 3004
+    feature_dim: 320
+    max_inputs_length: 600
+    max_target_length: 50
+    d_model: 512
+    n_heads: 8
+    d_k: 64
+    d_v: 64
+    d_inner_hid: 1024
+    num_enc_layer: 6
+    num_dec_layer: 6
+    share_embedding: False
+training:
+    use_gpu: True
+    num_gpu: 2
+    gpu_ids: 0,1
+    epoches: 10
+    label_smoothing: False
+    visualization: False
+    show_interval: 10
+optimizer:
+    n_warmup_steps: 40000
+decode:
+    beach_size: 10
+    beam_width: 10
+    n_best: 1

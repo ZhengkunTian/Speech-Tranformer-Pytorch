@@ -1,6 +1,7 @@
 '''A wrapper class for optimizer '''
 import numpy as np
 
+
 class ScheduledOptim(object):
     '''A simple wrapper class for learning rate scheduling'''
 
@@ -30,3 +31,8 @@ class ScheduledOptim(object):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = new_lr
             self.current_lr = new_lr
+
+    def get_current_lr(self):
+        self.current_lr = np.power(self.d_model, -0.5) * np.min([
+            np.power(self.n_current_steps, -0.5),
+            np.power(self.n_warmup_steps, -1.5) * self.n_current_steps])

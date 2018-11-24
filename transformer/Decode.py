@@ -34,8 +34,6 @@ class Decode(object):
             device=device,
             is_train=False)
 
-        prob_projection = nn.LogSoftmax()
-
         model.load_state_dict(checkpoint['model'])
         print('[Info] Trained model state loaded.')
 

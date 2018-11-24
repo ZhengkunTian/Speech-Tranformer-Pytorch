@@ -12,23 +12,22 @@ __author__ = "Zhengkun Tian"
 class DataLoader(object):
     ''' Load  '''
 
-    def __init__(self, data_name, batch_size, targets_file, vocab_file, vocab_size, left_context_width=0, right_context_width=0, frame_rate=10):
+    def __init__(self, config, data_name, batch_size, vocab_size, left_context_width=0, right_context_width=0, frame_rate=10):
 
-        self.data_name = data_name
+        self.config = config
+        self.data = self.config.__getattr__(data_name)
         self.batch_size = batch_size
         self.left_context_width = left_context_width
         self.right_context_width = right_context_width
         self.frame_rate = frame_rate
-        self.vocab_file = vocab_file
         self.vocab_size = vocab_size
-        self.targets_file = targets_file
         self.stop_iteration = False
         self.get_vocab_map()
         self.get_targets_dict()
 
     def get_vocab_map(self):
         self.unit2idx = {}
-        with codecs.open(self.vocab_file, 'r', encoding='utf-8') as fid:
+        with codecs.open(self.config.vocab, 'r', encoding='utf-8') as fid:
             idx = 0
             for line in fid:
                 unit = line.strip()
@@ -38,7 +37,7 @@ class DataLoader(object):
 
     def get_targets_dict(self):
         self.targets_dict = {}
-        with codecs.open(self.targets_file, 'r', encoding='utf-8') as fid:
+        with codecs.open(self.data.text, 'r', encoding='utf-8') as fid:
             for line in fid:
                 parts = line.strip().split(' ')
                 utt_id = parts[0]
@@ -89,14 +88,15 @@ class DataLoader(object):
             for inst in inputs:
                 pad_zeros_mat = np.zeros([1, max_len - inst.shape[0]])
                 inst_data.append(np.column_stack([inst.reshape(1, -1), pad_zeros_mat]))
+                padded_data = torch.LongTensor(np.row_stack(inst_data))
         elif dim == 2:
             feature_dim = inputs[0].shape[1]
             for inst in inputs:
                 pad_zeros_mat = np.zeros([max_len-inst.shape[0], feature_dim])
                 inst_data.append(np.row_stack([inst, pad_zeros_mat]).reshape(1, -1, feature_dim))
+                padded_data = torch.FloatTensor(np.row_stack(inst_data))
         else:
             raise AssertionError('Features in inputs list must be one vector or two dimension matrix! ')
-        padded_data = np.row_stack(inst_data)
         return padded_data
 
     def concat_frame(self, features):
@@ -139,15 +139,14 @@ class DataLoader(object):
 
 
 class KaldiFeaturesLoader(DataLoader):
-    def __init__(self, data_name, batch_size, scpfile, targets_file, vocab_file, vocab_size, apply_cmvn=False, cmvn_file=None,\
-                left_context_width=0, right_context_width=0, frame_rate=10, shuffle=True):
-        super(KaldiFeaturesLoader, self).__init__(data_name, batch_size, targets_file, \
-                vocab_file, vocab_size, left_context_width, right_context_width, frame_rate)
+    def __init__(self, config, data_name, batch_size, vocab_size, apply_cmvn=False,\
+                left_context_width=0, right_context_width=0, frame_rate=10, use_gpu=True, shuffle=True):
+        super(KaldiFeaturesLoader, self).__init__(config, data_name, batch_size, \
+                vocab_size, left_context_width, right_context_width, frame_rate)
 
-        self.scpfile = scpfile
         self.shuffle = shuffle
         self.apply_cmvn = apply_cmvn
-        self.cmvn_file = cmvn_file
+        self.use_gpu = use_gpu
         self.data_list = []
         self.remain = []
         if self.apply_cmvn:
@@ -159,7 +158,7 @@ class KaldiFeaturesLoader(DataLoader):
         return uttid[6:-5]
 
     def get_cmvn_dict(self):
-        cmvn_reader = kaldi_io.read_mat_scp(self.cmvn_file)
+        cmvn_reader = kaldi_io.read_mat_scp(self.data.cmvnscp)
         for spkid, stats in cmvn_reader:
             self.cmvn_stats_dict[spkid] = stats
 
@@ -211,13 +210,36 @@ class KaldiFeaturesLoader(DataLoader):
         padded_features = self.pad(features)
         padded_targets = self.pad(targets)
 
+        if self.use_gpu:
+            padded_features = padded_features.cuda()
+            inputs_pos = inputs_pos.cuda()
+            padded_targets = padded_targets.cuda()
+            targets_pos = targets_pos.cuda()
+
         return {
-            'inputs': torch.FloatTensor(padded_features).size(),
-            'inputs_pos': torch.LongTensor(inputs_pos).size(),
-            'targets': torch.LongTensor(padded_targets).size(),
-            'targets_pos': torch.LongTensor(targets_pos).size(),
+            'inputs': padded_features,
+            'inputs_pos': inputs_pos,
+            'targets': padded_targets,
+            'targets_pos': targets_pos,
             'transcripts': targets
         }
 
     def reset(self):
-        self.feature_reader = kaldi_io.read_mat_scp(self.scpfile)
+        self.feature_reader = kaldi_io.read_mat_scp(self.data.arkscp)
+
+def build_data_loader(config, data_name):
+    if config.feature_source == 'kaldi':
+        return KaldiFeaturesLoader(
+            config=config.data,
+            data_name=data_name,
+            batch_size=config.data.batch_size,
+            vocab_size=config.model.vocab_size,
+            apply_cmvn=config.data.apply_cmvn,
+            left_context_width=config.data.left_context_width,
+            right_context_width=config.data.right_context_width,
+            frame_rate=config.data.frame_rate,
+            use_gpu=config.training.use_gpu,
+            shuffle=True
+        )
+    else:
+        raise NotImplementedError
