@@ -9,11 +9,12 @@ class ScheduledOptim(object):
         self.optimizer = optimizer
         self.d_model = d_model
         self.n_warmup_steps = n_warmup_steps
-        self.n_current_steps = 0
-        self.current_lr = 0
+        self.current_step = 0
+        self.lr = 0
 
     def step(self):
         "Step by the inner optimizer"
+        self.update_learning_rate()
         self.optimizer.step()
 
     def zero_grad(self):
@@ -23,16 +24,11 @@ class ScheduledOptim(object):
     def update_learning_rate(self):
         ''' Learning rate scheduling per step '''
 
-        self.n_current_steps += 1
-        new_lr = np.power(self.d_model, -0.5) * np.min([
+        self.current_step += 1
+        lr = np.power(self.d_model, -0.5) * np.min([
             np.power(self.n_current_steps, -0.5),
             np.power(self.n_warmup_steps, -1.5) * self.n_current_steps])
 
         for param_group in self.optimizer.param_groups:
-            param_group['lr'] = new_lr
-            self.current_lr = new_lr
-
-    def get_current_lr(self):
-        self.current_lr = np.power(self.d_model, -0.5) * np.min([
-            np.power(self.n_current_steps, -0.5),
-            np.power(self.n_warmup_steps, -1.5) * self.n_current_steps])
+            param_group['lr'] = lr
+            self.lr = new_lr
