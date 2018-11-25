@@ -17,9 +17,9 @@ class EncoderLayer(nn.Module):
             d_model, d_inner_hid, dropout=dropout)
         self.add_and_norm2 = nn.LayerNorm(d_model)
 
-    def forward(self, enc_input, slf_attn_mask=None):
+    def forward(self, inputs, slf_attn_mask=None):
         attn_output, slf_attn_weight = self.slf_attn(
-            enc_input, enc_input, enc_input, attn_mask=slf_attn_mask)
+            inputs, inputs, inputs, mask=slf_attn_mask)
         attn_norm_output = self.add_and_norm1(inputs + attn_output)
         pffn_output = self.pos_ffn(attn_norm_output)
         pffn_norm_output = self.add_and_norm2(attn_norm_output + pffn_output)
@@ -41,12 +41,12 @@ class DecoderLayer(nn.Module):
             d_model, d_inner_hid, dropout=dropout)
         self.add_and_norm3 = nn.LayerNorm(d_model)
 
-    def forward(self, dec_input, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
+    def forward(self,inputs, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
         slf_attn_output, slf_attn_weight = self.slf_attn(
-            dec_input, dec_input, dec_input, attn_mask=slf_attn_mask)
+            inputs, inputs, inputs, mask=slf_attn_mask)
         slf_attn_norm_output = self.add_and_norm1(inputs + slf_attn_output)
         sre_attn_output, sre_attn_weight = self.enc_attn(
-            slf_attn_norm_output, enc_output, enc_output, attn_mask=dec_enc_attn_mask)
+            slf_attn_norm_output, enc_output, enc_output, mask=dec_enc_attn_mask)
         sre_attn_norm_output = self.add_and_norm2(slf_attn_norm_output + sre_attn_output)
         pffn_output = self.pos_ffn(sre_attn_norm_output)
         pffn_norm_output = self.add_and_norm3(sre_attn_norm_output+pffn_output)

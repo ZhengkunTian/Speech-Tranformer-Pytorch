@@ -17,9 +17,7 @@ class PositionwiseFeedForward(nn.Module):
 
         # initialization
         init.xavier_normal_(self.fc1.weight.data)
-        init.xavier_normal_(self.fc1.bias.data)
         init.xavier_normal_(self.fc2.weight.data)
-        init.xavier_normal_(self.fc2.bias.data)
 
     def forward(self, x):
         x = self.relu(self.fc1(x))

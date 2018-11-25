@@ -1,25 +1,21 @@
-# "character", "word" or "phoneme"
 units_type: character
-# "kaldi" or "online"
 feature_source: kaldi
-# 'mfcc' of 'fbank'
 feature_type: fbank
-# vocab_size is equal to the size of vocabulary plus 4(<pad> <unk> <sos> <eos>)
 data:
-    vocab: ./data/vocab
-    context_width: 0
-    frame_rate: 10
+    vocab: /data3/tianzhengkun/data/aishell/simple_vocab
+    left_context_width: 3
+    right_context_width: 0
+    frame_rate: 30
     apply_cmvn: True
-    batch_size: 64
+    batch_size: 16
     train:
-        # wavscp: /data/train/wav.scp
-        arkscp: ./data/train/feats.scp
-        text: ./data/train/character
-        cmvnscp: ./data/train/cmvn.scp
+        arkscp: /data3/tianzhengkun/data/aishell/train/feats.scp
+        text: /data3/tianzhengkun/data/aishell/train/character
+        cmvnscp: /data3/tianzhengkun/data/aishell/train/cmvn.scp
     dev:
-        arkscp: ./data/dev/feats.scp
-        text: ./data/dev/character
-        cmvnscp: ./data/dev/cmvn.scp
+        arkscp: /data3/tianzhengkun/data/aishell/dev/feats.scp
+        text: /data3/tianzhengkun/data/aishell/dev/character
+        cmvnscp: /data3/tianzhengkun/data/aishell/dev/cmvn.scp
 model:
     vocab_size: 3004
     feature_dim: 320
@@ -32,17 +28,20 @@ model:
     d_inner_hid: 1024
     num_enc_layer: 6
     num_dec_layer: 6
+    emb_scale: 1
+    dropout: 0.1
     share_embedding: False
 training:
     use_gpu: True
-    num_gpu: 2
-    gpu_ids: 0,1
+    num_gpu: 1
+    gpu_ids: 0
     epoches: 10
     label_smoothing: False
-    visualization: False
+    visualization: True
     show_interval: 10
+    save_model: exp/transformer
 optimizer:
-    n_warmup_steps: 40000
+    n_warmup_steps: 4000
 decode:
     beach_size: 10
     beam_width: 10

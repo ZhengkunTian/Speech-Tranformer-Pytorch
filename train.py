@@ -1,6 +1,7 @@
 '''
 This script handling the training process.
 '''
+import os
 import argparse
 import time
 import yaml
@@ -11,11 +12,12 @@ import torch.optim as optim
 from DataLoader import build_data_loader
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
-from transformer.Utils import AttrDict, init_logger
+from transformer.Utils import AttrDict, init_logger, count_parameters
 from tensorboardX import SummaryWriter
 
+
 def train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer=None):
-    for epoch in range(self.training.epoches):
+    for epoch in range(config.training.epoches):
         model.train()
         for _, data_dict in enumerate(training_data):
             inputs = data_dict['inputs']
@@ -23,16 +25,17 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
             targets = data_dict['targets']
             targets_pos = data_dict['targets_pos']
             optimizer.zero_grad()
-            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
-            loss = crit(logits.view(-1, logits.size(2)), targets[1:].view(-1))
+            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
+            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
             loss.backward()
             optimizer.step()
 
             if visualizer is not None:
-                visualizer.add_scalar('train_loss', loss.item(), optimizer.current_step)
+                visualizer.add_scalar('model/train_loss', loss.item(), optimizer.current_step)
+                visualizer.add_scalar('model/learning_rate', optimizer.lr, optimizer.current_step)
 
             if optimizer.current_step % config.training.show_interval == 0:
-                logger.info('-Training-Epoch:%d, Global Step:%d, Learning Rate:%.5f, CrossEntropyLoss:%.5f' %
+                logger.info('-Training-Epoch:%d, Global Step:%d, Learning Rate:%.6f, CrossEntropyLoss:%.5f' %
                             (epoch, optimizer.current_step, optimizer.lr, loss.item()))
 
         model.eval()
@@ -41,12 +44,11 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
             inputs_pos = data_dict['inputs']
             targets = data_dict['targets']
             targets_pos = data_dict['targets_pos']
-            transcripts = data_dict['transcripts']
-            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
-            loss = crit(logits.view(-1, logits.size(2)), targets[1:].view(-1))
+            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
+            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
 
             if visualizer is not None:
-                visualizer.add_scalar('validation_loss', loss.item(), optimizer.current_step)
+                visualizer.add_scalar('model/validation_loss', loss.item(), optimizer.current_step)
 
             if step % cofig.training.show_interval == 0:
                 logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
@@ -68,12 +70,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-config', type=str, default=None)
     parser.add_argument('-load_model', type=str, default=None)
-    parser.add_argument('-log', type=str, default='./exp')
+    parser.add_argument('-log', type=str, default='./exp/train.log')
     opt = parser.parse_args()
 
     configfile = open(opt.config)
     config = AttrDict(yaml.load(configfile))
 
+    if not os.path.isdir():
+        os.mkdir('exp')
     logger = init_logger(opt.log)
 
     #========= Build DataLoader =========#
@@ -87,16 +91,21 @@ def main():
         model = Transformer(model_config)
 
         model.load_state_dict(checkpoint['model'])
-        logger.info('Loaded model from %s' %  opt.load_model)
+        logger.info('Loaded model from %s' % opt.load_model)
 
     else:
         model = Transformer(config.model)
 
+    n_params, enc, dec = count_parameters(model)
+    logger.info('# the number of parameters in encoder: %d' % enc)
+    logger.info('# the number of parameters in decoder: %d' % dec)
+    logger.info('# the number of parameters in the whole model: %d' % n_params)
+
     optimizer = ScheduledOptim(
         optim.Adam(
-            transformer.get_trainable_parameters(),
+            model.parameters(),
             betas=(0.9, 0.98), eps=1e-09),
-        opt.d_model, opt.n_warmup_steps)
+        config.model.d_model, config.optimizer.n_warmup_steps)
     logger.info('Created a optimizer.')
 
     crit = nn.CrossEntropyLoss()

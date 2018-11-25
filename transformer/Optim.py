@@ -26,9 +26,9 @@ class ScheduledOptim(object):
 
         self.current_step += 1
         lr = np.power(self.d_model, -0.5) * np.min([
-            np.power(self.n_current_steps, -0.5),
-            np.power(self.n_warmup_steps, -1.5) * self.n_current_steps])
+            np.power(self.current_step, -0.5),
+            np.power(self.n_warmup_steps, -1.5) * self.current_step])
 
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
-            self.lr = new_lr
+            self.lr = lr
