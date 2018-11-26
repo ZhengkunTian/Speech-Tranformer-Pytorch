@@ -87,3 +87,27 @@ def count_parameters(model):
         elif 'decoder' in name:
             dec += param.nelement()
     return n_params, enc, dec
+
+
+def init_parameters(model):
+    for name, param in model.named_parameters():
+        if param.dim() >= 2:
+            print('Initialize the parameters: %s' % name)
+            torch.nn.init.xavier_normal_(param)
+    print('Parameter initialization completed')
+
+
+def load_single_gpu_model(model, state_dict):
+    model.load_state_dict(state_dict)
+    return model
+
+
+def load_multi_gpu_model(model, state_dict):
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        namekey = k[7:]  # remove 'module.'
+        new_state_dict[namekey] = v
+        # load params
+    model.load_state_dict(new_state_dict)
+    return model

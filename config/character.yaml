@@ -32,6 +32,7 @@ model:
     dropout: 0.1
     share_embedding: False
 training:
+    seed: 2018
     use_gpu: True
     num_gpu: 1
     gpu_ids: 0

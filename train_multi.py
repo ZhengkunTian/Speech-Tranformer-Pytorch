@@ -1,8 +1,9 @@
 '''
-This script handling the training process.
+This script handling the multi-gpu training process.
 '''
 import os
 import argparse
+import sys
 import yaml
 import torch
 import torch.nn as nn
@@ -10,12 +11,11 @@ import numpy as np
 from DataLoader import build_data_loader
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
-from transformer.Utils import AttrDict, init_logger, count_parameters
+from transformer.Utils import AttrDict, init_logger, count_parameters, load_multi_gpu_model
 from tensorboardX import SummaryWriter
 
 
 def train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer=None):
-    dev_step = 0
     for epoch in range(config.training.epoches):
         model.train()
         for _, data_dict in enumerate(training_data):
@@ -38,29 +38,26 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
                             (epoch, optimizer.current_step, optimizer.lr, loss.item()))
 
         model.eval()
-        total_loss = 0
         for step, data_dict in enumerate(validation_data):
-            dev_step += 1
             inputs = data_dict['inputs']
             inputs_pos = data_dict['inputs']
             targets = data_dict['targets']
             targets_pos = data_dict['targets_pos']
+
             logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
             loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
-            total_loss += loss.item()
 
             if visualizer is not None:
-                visualizer.add_scalar('model/validation_loss', loss.item(), dev_step)
+                visualizer.add_scalar('model/validation_loss', loss.item(), optimizer.current_step)
 
             if step % cofig.training.show_interval == 0:
                 logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
-
-        logger.info('-Validation-Epoch:%4d, AverageCrossEntropyLoss:%.5f' % (epoch, total_loss))
 
         # save model
         model_state_dict = model.state_dict()
         checkpoint = {
             'settings': config.model,
+            'multi_gpu': True,
             'model': model_state_dict,
             'epoch': epoch,
             'global_step': optimizer.current_step
@@ -86,10 +83,18 @@ def main():
 
     if config.training.use_gpu:
         torch.cuda.manual_seed(config.training.seed)
-        torch.backends.cudnn.deterministic = True
     else:
         torch.manual_seed(config.training.seed)
     logger.info('Set random seed: %d' % config.training.seed)
+
+    multi_gpu = True if config.training.num_gpu >= 1 else False
+    if not multi_gpu:
+        logger.error('Please set num_gpu larger than 1 in config file!')
+        sys.exit()
+    else:
+        devices_id = [int(i) for i in config.training.gpu_ids.split(',')]
+        assert len(devices_id) == config.training.num_gpu
+        assert len(devices_id) <= torch.cuda.device_count()
 
     #========= Build DataLoader =========#
     training_data = build_data_loader(config, 'train')
@@ -100,8 +105,10 @@ def main():
         checkpoint = torch.load(opt.load_model)
         model_config = checkpoint['settings']
         model = Transformer(model_config)
-
-        model.load_state_dict(checkpoint['model'])
+        if checkpoint['multi_gpu']:
+            load_multi_gpu_model(model, checkpoint['model'])
+        else:
+            load_single_gpu_model(model, checkpoint['model'])
         logger.info('Loaded model from %s' % opt.load_model)
 
     else:
@@ -112,28 +119,26 @@ def main():
     logger.info('# the number of parameters in decoder: %d' % dec)
     logger.info('# the number of parameters in the whole model: %d' % n_params)
 
-    optimizer = ScheduledOptim(
-        optim.Adam(
-            model.parameters(),
-            betas=(0.9, 0.98), eps=1e-09),
-        config.model.d_model, config.optimizer.n_warmup_steps)
-    logger.info('Created a optimizer.')
+    transformer = nn.DataParallel(model.cuda(), devices_id=devices_id)
+    logger.info('Upload the model to gpu: %s' % config.training.gpu_ids))
 
-    crit = nn.CrossEntropyLoss()
+    adam=nn.DataParallel(nn.optim.Adam(transformer.parameters(),
+                                         betas=(0.9, 0.98), eps=1e-09), devices_id = devices_id)
+    optimizer=ScheduledOptim(adam, config.model.d_model,
+                               config.optimizer.n_warmup_steps, multi_gpu = multi_gpu)
+    logger.info('Created a multi_gpu optimizer.')
+
+    crit=nn.CrossEntropyLoss()
     logger.info('Created cross entropy loss function')
-
-    if config.training.use_gpu:
-        model.cuda()
-        logger.info('Loaded the model to the GPU')
 
     # create a visualizer
     if config.training.visualization:
-        visualizer = SummaryWriter()
+        visualizer=SummaryWriter()
         logger.info('Created a visualizer.')
     else:
-        visualizer = None
+        visualizer=None
 
-    train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer)
+    train(config, transformer, training_data, validation_data, crit, optimizer, logger, visualizer)
 
 
 if __name__ == '__main__':
