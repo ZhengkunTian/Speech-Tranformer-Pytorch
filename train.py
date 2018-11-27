@@ -38,25 +38,28 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
                 logger.info('-Training-Epoch:%d, Global Step:%d, Learning Rate:%.6f, CrossEntropyLoss:%.5f' %
                             (epoch, optimizer.current_step, optimizer.lr, loss.item()))
 
-        model.eval()
-        total_loss = 0
-        for step, data_dict in enumerate(validation_data):
-            dev_step += 1
-            inputs = data_dict['inputs']
-            inputs_pos = data_dict['inputs_pos']
-            targets = data_dict['sos_targets']
-            targets_pos = data_dict['sos_targets_pos']
-            eos_targets = data_dict['targets_eos']
-            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
-            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
-            total_loss += loss.item()
+        if config.training.dev_on_training:
+            model.eval()
+            total_loss = 0
+            for step, data_dict in enumerate(validation_data):
+                dev_step += 1
+                inputs = data_dict['inputs']
+                inputs_pos = data_dict['inputs_pos']
+                targets = data_dict['sos_targets']
+                targets_pos = data_dict['sos_targets_pos']
+                eos_targets = data_dict['targets_eos']
+                logits, _ = model(inputs, inputs_pos, targets, targets_pos)
+                loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
+                total_loss += loss.item()
 
-            if visualizer is not None:
-                visualizer.add_scalar('model/validation_loss', loss.item(), dev_step)
+                if visualizer is not None:
+                    visualizer.add_scalar('model/validation_loss', loss.item(), dev_step)
 
-            if step % config.training.show_interval == 0:
-                logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
+                if step % config.training.show_interval == 0:
+                    logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
 
+            logger.info('-Validation-Epoch:%4d, AverageCrossEntropyLoss:%.5f' %
+                        (epoch, total_loss/step))
         # save model
         model_state_dict = model.state_dict()
         checkpoint = {
