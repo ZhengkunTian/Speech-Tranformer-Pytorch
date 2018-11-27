@@ -21,11 +21,12 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
         for _, data_dict in enumerate(training_data):
             inputs = data_dict['inputs']
             inputs_pos = data_dict['inputs_pos']
-            targets = data_dict['targets']
-            targets_pos = data_dict['targets_pos']
+            targets = data_dict['sos_targets']
+            targets_pos = data_dict['sos_targets_pos']
+            eos_targets = data_dict['targets_eos']
             optimizer.zero_grad()
-            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
-            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
+            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
+            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
             loss.backward()
             optimizer.step()
 
@@ -42,11 +43,12 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
         for step, data_dict in enumerate(validation_data):
             dev_step += 1
             inputs = data_dict['inputs']
-            inputs_pos = data_dict['inputs']
-            targets = data_dict['targets']
-            targets_pos = data_dict['targets_pos']
-            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
-            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
+            inputs_pos = data_dict['inputs_pos']
+            targets = data_dict['sos_targets']
+            targets_pos = data_dict['sos_targets_pos']
+            eos_targets = data_dict['targets_eos']
+            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
+            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
             total_loss += loss.item()
 
             if visualizer is not None:
@@ -92,15 +94,19 @@ def main():
     logger.info('Set random seed: %d' % config.training.seed)
 
     #========= Build DataLoader =========#
-    training_data = build_data_loader(config, 'train')
-    validation_data = build_data_loader(config, 'dev')
+    if config.use_gpu:
+        device_ids = int(config.training.gpu_ids)
+        device = torch.device('cuda:%d' % device_ids)
+    else:
+        device = torch.device('cpu')
+    training_data = build_data_loader(config, 'train', device)
+    validation_data = build_data_loader(config, 'dev', device)
 
     #========= Build A Model Or Load Pre-trained Model=========#
     if opt.load_model:
         checkpoint = torch.load(opt.load_model)
         model_config = checkpoint['settings']
         model = Transformer(model_config)
-
         model.load_state_dict(checkpoint['model'])
         logger.info('Loaded model from %s' % opt.load_model)
 
@@ -123,7 +129,7 @@ def main():
     logger.info('Created cross entropy loss function')
 
     if config.training.use_gpu:
-        model.cuda()
+        model.cuda(device_ids)
         logger.info('Loaded the model to the GPU')
 
     # create a visualizer

@@ -19,8 +19,13 @@ fbank:
 ```
 means that you want to extract fbank features online by python_speech_features. 'mfcc' is also avalible.
 ## Train
+If you will train your model by cpu or single gpu:
 ```python
 python train.py -config config/character.yaml
+```
+if multi gpus are avalible:
+```python
+python train_multi.py -config config/character.yaml
 ```
 ## Test
 ```python

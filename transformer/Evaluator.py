@@ -1,66 +1,48 @@
-''' Translate input text with trained model. '''
-
 import torch
 import argparse
 import configparser
 from transformer.Decode import Decode
-from DataLoader import DataLoader
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def main():
-    '''Main Function'''
+class Evaluator(nn.Module):
+    ''' A Evaluator is used to evaluate and test. '''
 
-    parser = argparse.ArgumentParser(description='translate.py')
+    def __init__(self, config):
+        super(Evaluator, self).__init__()
 
-    parser.add_argument('-model', required=True,
-                        help='Path to model .pt file')
-    parser.add_argument('-output', default='pred.txt',
-                        help="""Path to output the predictions (each line will
-                        be the decoded sequence""")
-    parser.add_argument('-beam_size', type=int, default=5,
-                        help='Beam size')
-    parser.add_argument('-batch_size', type=int, default=30,
-                        help='Batch size')
-    parser.add_argument('-n_best', type=int, default=1,
-                        help="""If verbose is set, will output the n_best
-                        decoded sentences""")
+        self.config = config
+        self.encoder = Encoder(
+            input_dim=config.feature_dim,
+            n_max_seq=config.max_inputs_length,
+            n_layers=config.num_enc_layer,
+            n_head=config.n_heads,
+            d_k=config.d_k,
+            d_v=config.d_v,
+            d_model=config.d_model,
+            d_inner_hid=config.d_inner_hid,
+            dropout=config.dropout,
+            emb_scale=config.emb_scale)
+        self.decoder = Decoder(
+            vocab_size=config.vocab_size,
+            n_max_seq=config.max_target_length,
+            n_layers=config.num_dec_layer,
+            n_head=config.n_heads,
+            d_k=config.d_k,
+            d_v=config.d_v,
+            d_model=config.d_model,
+            d_inner_hid=config.d_inner_hid,
+            dropout=config.dropout,
+            emb_scale=config.emb_scale)
 
-    opt = parser.parse_args()
+        self.tgt_word_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-    # load config
-    cfg_path = './config/transformer.cfg'
-    config = configparser.ConfigParser()
-    config.read(cfg_path)
+    def forward(self, inputs, inputs_pos, targets=None, targets_pos=None, return_attns=False):
 
-    # Prepare DataLoader
-    test_data = DataLoader(
-        'test', config, batch_size=opt.batch_size, context_width=opt.context_width, frame_rate=opt.frame_rate, return_target=False)
+        enc_output, enc_slf_attn = self.encoder(inputs, inputs_pos, return_attns)
 
-    opt.input_dim = test_data.features_dim
-    opt.output_dim = test_data.vocab_size
-    opt.n_inputs_max_seq = test_data.inputs_max_seq_lengths
-    opt.n_outputs_max_seq = test_data.outputs_max_seq_lengths
+        for i in range(self.config.max_target_length):
+            dec_output, dec_slf_attn, dec_enc_attn = self.decoder(targets, targets_pos, inputs_pos, enc_output,
+                                                                  return_attns)
+            seq_logit = self.tgt_word_proj(dec_output)
 
-    decoder = Decode(opt, device)
-    decoder.model.eval()
-
-    with open(opt.output, 'w') as f:
-        for step, batch in enumerate(test_data):
-            all_hyp, all_scores = decoder.decode_batch(batch)
-            idx_in_batch = 0
-            for idx_seqs in all_hyp:
-                for idx_seq in idx_seqs:
-                    idx_seq = [idx.item() for idx in idx_seq]
-                    pred_line = test_data.target_coder.decode(idx_seq)
-                    f.write(pred_line + '\n')
-                    print('Index: %d  Decode Sequence: %s' %
-                          (step + idx_in_batch, pred_line))
-                idx_in_batch += 1
-
-    print('[Info] Finished.')
-
-
-if __name__ == "__main__":
-    main()
+        return seq_logit, (enc_slf_attn, dec_slf_attn, dec_enc_attn)

@@ -46,7 +46,8 @@ def padding_info_mask(seq_q, seq_k):
     pad_attn_mask = seq_k.data.eq(0).unsqueeze(1)   # bx1xsk
     pad_attn_mask = pad_attn_mask.expand(mb_size, len_q, len_k)  # bxsqxsk
     if seq_q.is_cuda:
-        return pad_attn_mask.cuda()
+        device = seq_q.get_device()
+        return pad_attn_mask.cuda(device)
     return pad_attn_mask
 
 
@@ -57,7 +58,8 @@ def feature_info_mask(seq):
     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
     subsequent_mask = torch.from_numpy(subsequent_mask)
     if seq.is_cuda:
-        return subsequent_mask.cuda()
+        device = seq.get_device()
+        return subsequent_mask.cuda(device)
     return subsequent_mask
 
 

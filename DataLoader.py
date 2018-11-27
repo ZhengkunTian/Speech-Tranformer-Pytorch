@@ -5,9 +5,10 @@ import torch
 import kaldi_io
 import codecs
 import time
-from transformer.Constants import BOS, EOS, UNK
+from transformer.Constants import BOS_FLAG, EOS_FLAG, UNK_FLAG
 
 __author__ = "Zhengkun Tian"
+
 
 class DataLoader(object):
     ''' Load  '''
@@ -57,14 +58,14 @@ class DataLoader(object):
             return self.get_batch()
 
     def encode(self, seq):
-        seq.insert(0, BOS)
-        seq.append(EOS)
+        seq.insert(0, BOS_FLAG)
+        seq.append(EOS_FLAG)
         encoded_seq = []
         for unit in seq:
             if unit in self.unit2idx:
                 encoded_seq.append(self.unit2idx[unit])
             else:
-                encoded_seq.append(self.unit2idx[UNK])
+                encoded_seq.append(self.unit2idx[UNK_FLAG])
         return encoded_seq
 
     def get_batch(self):
@@ -96,36 +97,38 @@ class DataLoader(object):
                 inst_data.append(np.row_stack([inst, pad_zeros_mat]).reshape(1, -1, feature_dim))
                 padded_data = torch.FloatTensor(np.row_stack(inst_data))
         else:
-            raise AssertionError('Features in inputs list must be one vector or two dimension matrix! ')
+            raise AssertionError(
+                'Features in inputs list must be one vector or two dimension matrix! ')
         return padded_data
 
     def concat_frame(self, features):
 
         time_steps, features_dim = features.shape
         concated_features = np.zeros(
-            shape=[time_steps, features_dim * (1 + self.left_context_width + self.right_context_width)],
+            shape=[time_steps, features_dim *
+                   (1 + self.left_context_width + self.right_context_width)],
             dtype=np.float32)
 
         # middle part is just the uttarnce
         concated_features[:, self.left_context_width * features_dim:
-                    (self.left_context_width + 1) * features_dim] = features
+                          (self.left_context_width + 1) * features_dim] = features
 
         for i in range(self.left_context_width):
             # add left context
             concated_features[i + 1:time_steps,
-                        (self.left_context_width - i - 1) * features_dim:
-                        (self.left_context_width - i) * features_dim] = features[0:time_steps - i - 1, :]
+                              (self.left_context_width - i - 1) * features_dim:
+                              (self.left_context_width - i) * features_dim] = features[0:time_steps - i - 1, :]
 
         for i in range(self.right_context_width):
             # add right context
             concated_features[0:time_steps - i - 1,
-                        (self.right_context_width + i + 1) * features_dim:
-                        (self.right_context_width + i + 2) * features_dim] = features[i + 1:time_steps, :]
+                              (self.right_context_width + i + 1) * features_dim:
+                              (self.right_context_width + i + 2) * features_dim] = features[i + 1:time_steps, :]
 
         return concated_features
 
     def subsampling(self, features):
-        if self.frame_rate !=0:
+        if self.frame_rate != 0:
             interval = int(self.frame_rate / 10)
             temp_mat = [features[i]
                         for i in range(0, features.shape[0], interval)]
@@ -139,16 +142,15 @@ class DataLoader(object):
 
 
 class KaldiFeaturesLoader(DataLoader):
-    def __init__(self, config, data_name, batch_size, vocab_size, apply_cmvn=False,\
-                left_context_width=0, right_context_width=0, frame_rate=10, use_gpu=True, shuffle=True):
-        super(KaldiFeaturesLoader, self).__init__(config, data_name, batch_size, \
-                vocab_size, left_context_width, right_context_width, frame_rate)
+    def __init__(self, config, data_name, batch_size, vocab_size, apply_cmvn=False,
+                 left_context_width=0, right_context_width=0, frame_rate=10, device=None, shuffle=True):
+        super(KaldiFeaturesLoader, self).__init__(config, data_name, batch_size,
+                                                  vocab_size, left_context_width, right_context_width, frame_rate)
 
         self.shuffle = shuffle
         self.apply_cmvn = apply_cmvn
-        self.use_gpu = use_gpu
+        self.device = device
         self.data_list = []
-        self.remain = []
         if self.apply_cmvn:
             self.cmvn_stats_dict = {}
             self.get_cmvn_dict()
@@ -171,16 +173,10 @@ class KaldiFeaturesLoader(DataLoader):
         self.data_list = []
         while len(self.data_list) < self.batch_size:
             # check if there are remained data pairs in last epoch
-            if len(self.remain) > 0:
-                self.data_list = self.remain
-                self.remain = []
-
             try:
                 utt_id, mat = next(self.feature_reader)
             except StopIteration:
-                self.remain = self.data_list
                 self.stop_iteration = True
-                raise StopIteration
                 break
 
             if self.apply_cmvn:
@@ -193,8 +189,6 @@ class KaldiFeaturesLoader(DataLoader):
 
             labels = self.targets_dict[utt_id]
             self.data_list.append((mat, labels))
-
-        assert len(self.data_list) == self.batch_size
 
         if self.shuffle:
             random.shuffle(self.data_list)
@@ -210,24 +204,27 @@ class KaldiFeaturesLoader(DataLoader):
         padded_features = self.pad(features)
         padded_targets = self.pad(targets)
 
-        if self.use_gpu:
-            padded_features = padded_features.cuda()
-            inputs_pos = inputs_pos.cuda()
-            padded_targets = padded_targets.cuda()
-            targets_pos = targets_pos.cuda()
+        if self.device is not None:
+            padded_features = padded_features.to(self.device)
+            inputs_pos = inputs_pos.to(self.device)
+            sos_targets = padded_targets[:, :-1].to(self.device)
+            sos_targets_pos = targets_pos[:, :-1].to(self.device)
+            targets_eos = padded_targets[:, 1:].to(self.device)
 
         return {
             'inputs': padded_features,
             'inputs_pos': inputs_pos,
-            'targets': padded_targets,
-            'targets_pos': targets_pos,
+            'sos_targets': sos_targets,
+            'sos_targets_pos': sos_targets_pos,
+            'targets_eos': targets_eos,
             'transcripts': targets
         }
 
     def reset(self):
         self.feature_reader = kaldi_io.read_mat_scp(self.data.arkscp)
 
-def build_data_loader(config, data_name):
+
+def build_data_loader(config, data_name, device):
     if config.feature_source == 'kaldi':
         return KaldiFeaturesLoader(
             config=config.data,
@@ -238,7 +235,7 @@ def build_data_loader(config, data_name):
             left_context_width=config.data.left_context_width,
             right_context_width=config.data.right_context_width,
             frame_rate=config.data.frame_rate,
-            use_gpu=config.training.use_gpu,
+            device=device,
             shuffle=True
         )
     else:

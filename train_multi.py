@@ -21,11 +21,12 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
         for _, data_dict in enumerate(training_data):
             inputs = data_dict['inputs']
             inputs_pos = data_dict['inputs_pos']
-            targets = data_dict['targets']
-            targets_pos = data_dict['targets_pos']
+            targets = data_dict['sos_targets']
+            targets_pos = data_dict['sos_targets_pos']
+            eos_targets = data_dict['targets_eos']
             optimizer.zero_grad()
-            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
-            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
+            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
+            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
             loss.backward()
             optimizer.step()
 
@@ -40,12 +41,13 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
         model.eval()
         for step, data_dict in enumerate(validation_data):
             inputs = data_dict['inputs']
-            inputs_pos = data_dict['inputs']
-            targets = data_dict['targets']
-            targets_pos = data_dict['targets_pos']
+            inputs_pos = data_dict['inputs_pos']
+            targets = data_dict['sos_targets']
+            targets_pos = data_dict['sos_targets_pos']
+            eos_targets = data_dict['targets_eos']
 
-            logits, _ = model(inputs, inputs_pos, targets[:, :-1], targets_pos[:, :-1])
-            loss = crit(logits.view(-1, logits.size(2)), targets[:, 1:].contiguous().view(-1))
+            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
+            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
 
             if visualizer is not None:
                 visualizer.add_scalar('model/validation_loss', loss.item(), optimizer.current_step)
@@ -77,12 +79,13 @@ def main():
     configfile = open(opt.config)
     config = AttrDict(yaml.load(configfile))
 
-    if not os.path.isdir():
+    if not os.path.isdir('./exp'):
         os.mkdir('exp')
     logger = init_logger(opt.log)
 
     if config.training.use_gpu:
         torch.cuda.manual_seed(config.training.seed)
+        torch.backends.cudnn.deterministic = True
     else:
         torch.manual_seed(config.training.seed)
     logger.info('Set random seed: %d' % config.training.seed)
@@ -96,9 +99,10 @@ def main():
         assert len(devices_id) == config.training.num_gpu
         assert len(devices_id) <= torch.cuda.device_count()
 
+    device = torch.device('cuda:%d' % devices_id[0])
     #========= Build DataLoader =========#
-    training_data = build_data_loader(config, 'train')
-    validation_data = build_data_loader(config, 'dev')
+    training_data = build_data_loader(config, 'train', device)
+    validation_data = build_data_loader(config, 'dev', device)
 
     #========= Build A Model Or Load Pre-trained Model=========#
     if opt.load_model:
@@ -119,24 +123,22 @@ def main():
     logger.info('# the number of parameters in decoder: %d' % dec)
     logger.info('# the number of parameters in the whole model: %d' % n_params)
 
-    transformer = nn.DataParallel(model.cuda(), devices_id=devices_id)
-    logger.info('Upload the model to gpu: %s' % config.training.gpu_ids))
+    transformer = nn.DataParallel(model.to(device), device_ids=devices_id)
+    logger.info('Upload the model to gpu: %s' % config.training.gpu_ids)
 
-    adam=nn.DataParallel(nn.optim.Adam(transformer.parameters(),
-                                         betas=(0.9, 0.98), eps=1e-09), devices_id = devices_id)
-    optimizer=ScheduledOptim(adam, config.model.d_model,
-                               config.optimizer.n_warmup_steps, multi_gpu = multi_gpu)
+    adam = torch.optim.Adam(transformer.parameters(), betas=(0.9, 0.98), eps=1e-09)
+    optimizer = ScheduledOptim(adam, config.model.d_model, config.optimizer.n_warmup_steps)
     logger.info('Created a multi_gpu optimizer.')
 
-    crit=nn.CrossEntropyLoss()
+    crit = nn.CrossEntropyLoss()
     logger.info('Created cross entropy loss function')
 
     # create a visualizer
     if config.training.visualization:
-        visualizer=SummaryWriter()
+        visualizer = SummaryWriter()
         logger.info('Created a visualizer.')
     else:
-        visualizer=None
+        visualizer = None
 
     train(config, transformer, training_data, validation_data, crit, optimizer, logger, visualizer)
 
