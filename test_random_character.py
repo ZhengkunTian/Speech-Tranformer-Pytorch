@@ -7,7 +7,7 @@ import yaml
 import torch
 import torch.nn as nn
 import numpy as np
-from DataLoader import build_data_loader
+from tests.random_character_loader import random_character_loader
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
 from transformer.Utils import AttrDict, init_logger, count_parameters
@@ -75,7 +75,7 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
 def main():
     ''' Main function '''
     parser = argparse.ArgumentParser()
-    parser.add_argument('-config', type=str, default=None)
+    parser.add_argument('-config', type=str, default='config/random.yaml')
     parser.add_argument('-load_model', type=str, default=None)
     parser.add_argument('-log', type=str, default='./exp/train.log')
     opt = parser.parse_args()
@@ -100,8 +100,16 @@ def main():
         device = torch.device('cuda:%d' % device_ids)
     else:
         device = torch.device('cpu')
-    training_data = build_data_loader(config, 'train', device)
-    validation_data = build_data_loader(config, 'dev', device)
+    training_data = random_character_loader(
+        batch_size=config.data.batch_size,
+        vocab_size=config.model.vocab_size,
+        length=1000,
+        device=device)
+    validation_data = random_character_loader(
+        batch_size=config.data.batch_size,
+        vocab_size=config.model.vocab_size,
+        length=100,
+        device=device)
 
     #========= Build A Model Or Load Pre-trained Model=========#
     if opt.load_model:
@@ -118,6 +126,10 @@ def main():
     logger.info('# the number of parameters in encoder: %d' % enc)
     logger.info('# the number of parameters in decoder: %d' % dec)
     logger.info('# the number of parameters in the whole model: %d' % n_params)
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            print(name)
 
     optimizer = ScheduledOptim(
         torch.optim.Adam(

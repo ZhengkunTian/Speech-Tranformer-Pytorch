@@ -2,12 +2,12 @@ units_type: character
 feature_source: kaldi
 feature_type: fbank
 data:
-    vocab: /data3/tianzhengkun/data/aishell/simple_vocab
+    vocab: /data3/tianzhengkun/data/aishell/vocab
     left_context_width: 3
     right_context_width: 0
     frame_rate: 30
     apply_cmvn: True
-    batch_size: 16
+    batch_size: 64
     train:
         arkscp: /data3/tianzhengkun/data/aishell/train/feats.scp
         text: /data3/tianzhengkun/data/aishell/train/character
@@ -22,28 +22,28 @@ model:
     max_inputs_length: 600
     max_target_length: 50
     d_model: 512
-    n_heads: 8
-    d_k: 64
-    d_v: 64
+    n_heads: 4
+    d_k: 128
+    d_v: 128
     d_inner_hid: 1024
     num_enc_layer: 6
     num_dec_layer: 6
     emb_scale: 1
-    dropout: 0.1
+    dropout: 0.2
     share_embedding: False
 training:
     seed: 2018
     use_gpu: True
     num_gpu: 1
     gpu_ids: 0
-    epoches: 10
+    epoches: 30
     label_smoothing: False
     visualization: True
     show_interval: 10
     save_model: exp/transformer
     dev_on_training: False
 optimizer:
-    n_warmup_steps: 4000
+    n_warmup_steps: 12000
 decode:
     beach_size: 10
     beam_width: 10
