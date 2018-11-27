@@ -41,6 +41,7 @@ training:
     visualization: True
     show_interval: 10
     save_model: exp/transformer
+    dev_on_training: False
 optimizer:
     n_warmup_steps: 4000
 decode:
