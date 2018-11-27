@@ -54,10 +54,8 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
             if visualizer is not None:
                 visualizer.add_scalar('model/validation_loss', loss.item(), dev_step)
 
-            if step % cofig.training.show_interval == 0:
+            if step % config.training.show_interval == 0:
                 logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
-
-        logger.info('-Validation-Epoch:%4d, AverageCrossEntropyLoss:%.5f' % (epoch, total_loss))
 
         # save model
         model_state_dict = model.state_dict()
