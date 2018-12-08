@@ -27,17 +27,21 @@ class PositionalEncoding(nn.Module):
                               -(math.log(10000.0) / dim)))
         pe[:, 0::2] = torch.sin(position.float() * div_term)
         pe[:, 1::2] = torch.cos(position.float() * div_term)
-        pe = pe.unsqueeze(1)
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
         self.dropout = nn.Dropout(p=dropout)
         self.dim = dim
 
     def forward(self, inputs, step=None):
         emb = inputs.mul(math.sqrt(self.dim))
+        batch_size, time_steps, feature_dim = inputs.size()
+        assert self.dim == feature_dim
         if step is None:
-            emb = emb + self.pe[:emb.size(1)]
+            pos_enc = self.pe[:, :time_steps].repeat(batch_size, 1, 1)
+            emb = emb + pos_enc
         else:
-            emb = emb + self.pe[step]
+            pos_enc = self.pe[:, step].repeat(batch_size, 1, 1)
+            emb = emb + pos_enc
         emb = self.dropout(emb)
         return emb
 
@@ -45,3 +49,5 @@ class PositionalEncoding(nn.Module):
 if __name__ == '__main__':
     embedding = PositionalEncoding(0.1, 10, 20)
     print(embedding.pe.size())
+    inputs = torch.randn([4, 3, 10])
+    embedding(inputs)

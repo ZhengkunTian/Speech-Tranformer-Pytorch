@@ -24,9 +24,9 @@ training:
     use_gpu: False
     num_gpu: 1
     gpu_ids: 0
-    epoches: 10
+    epoches: 1
     label_smoothing: False
-    visualization: False
+    visualization: True
     show_interval: 10
     save_model: exp/transformer
     dev_on_training: False

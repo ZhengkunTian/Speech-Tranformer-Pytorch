@@ -63,7 +63,7 @@ def train(config, model, training_data, validation_data, crit, optimizer, logger
         # save model
         model_state_dict = model.state_dict()
         checkpoint = {
-            'settings': config.model,
+            'settings': dict(config.model),
             'model': model_state_dict,
             'epoch': epoch,
             'global_step': optimizer.current_step
@@ -114,7 +114,7 @@ def main():
     #========= Build A Model Or Load Pre-trained Model=========#
     if opt.load_model:
         checkpoint = torch.load(opt.load_model)
-        model_config = checkpoint['settings']
+        model_config = AttrDict(checkpoint['settings'])
         model = Transformer(model_config)
         model.load_state_dict(checkpoint['model'])
         logger.info('Loaded model from %s' % opt.load_model)
@@ -147,12 +147,23 @@ def main():
 
     # create a visualizer
     if config.training.visualization:
-        visualizer = SummaryWriter()
+        visualizer = SummaryWriter('runs')
         logger.info('Created a visualizer.')
     else:
         visualizer = None
 
-    train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer)
+    from torchviz import make_dot
+    from graphviz import Digraph
+
+    for _, data_dict in enumerate(training_data):
+        inputs = data_dict['inputs']
+        inputs_pos = data_dict['inputs_pos']
+        targets = data_dict['sos_targets']
+        targets_pos = data_dict['sos_targets_pos']
+        output, _ = model(inputs, inputs_pos, targets, targets_pos)
+        make_dot(output, params=dict(model.named_parameters()))
+        break
+    # train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer)
 
 
 if __name__ == '__main__':

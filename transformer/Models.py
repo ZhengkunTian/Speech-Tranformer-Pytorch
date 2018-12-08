@@ -34,11 +34,11 @@ class Encoder(nn.Module):
                          d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, inputs_data, inputs_pos, return_attns=False):
-
+    def forward(self, inputs_data, inputs_pos):
+        return_attns = False
         # Position Encoding addition
         enc_input = self.input_proj(inputs_data)
-        enc_input += self.position_enc(inputs_pos)
+        enc_input = self.position_enc(enc_input)
 
         enc_slf_attn_mask = padding_info_mask(inputs_pos, inputs_pos)
 
@@ -74,20 +74,18 @@ class Decoder(nn.Module):
 
         self.tgt_word_emb = nn.Embedding(vocab_size, d_model, Constants.PAD)
 
-        self.dropout = nn.Dropout(dropout)
-
         self.layer_stack = nn.ModuleList([
             DecoderLayer(d_model, d_inner_hid, n_head,
                          d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, outputs_data, outputs_pos, input_pos, enc_output, return_attns=False):
-
+    def forward(self, outputs_data, outputs_pos, input_pos, enc_output):
+        return_attns = False
         # Word embedding look up
         dec_input = self.tgt_word_emb(outputs_data)
 
         # Position Encoding addition
-        dec_input += self.position_enc(outputs_pos)
+        dec_input = self.position_enc(dec_input)
 
         dec_slf_attn_pad_mask = padding_info_mask(
             outputs_data, outputs_data)
@@ -145,11 +143,11 @@ class Transformer(nn.Module):
 
         self.tgt_word_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-    def forward(self, inputs, inputs_pos, targets=None, targets_pos=None, return_attns=False):
-
-        enc_output, enc_slf_attn = self.encoder(inputs, inputs_pos, return_attns)
-        dec_output, dec_slf_attn, dec_enc_attn = self.decoder(targets, targets_pos, inputs_pos, enc_output,
-                                                              return_attns)
+    def forward(self, inputs, inputs_pos, targets=None, targets_pos=None):
+        return_attns = False
+        enc_output, enc_slf_attn = self.encoder(inputs, inputs_pos)
+        dec_output, dec_slf_attn, dec_enc_attn = self.decoder(
+            targets, targets_pos, inputs_pos, enc_output)
         seq_logit = self.tgt_word_proj(dec_output)
 
         return seq_logit, (enc_slf_attn, dec_slf_attn, dec_enc_attn)
