@@ -4,20 +4,6 @@ import torch.nn as nn
 import numpy as np
 
 
-def position_encoding_init(n_position, pos_enc_dim):
-    ''' Init the sinusoid position encoding table '''
-
-    # keep dim 0 for padding token position encoding zero vector
-    position_enc = np.array([
-        [pos / np.power(10000, 2 * (j // 2) / pos_enc_dim)
-         for j in range(pos_enc_dim)]
-        if pos != 0 else np.zeros(pos_enc_dim) for pos in range(n_position)])
-
-    position_enc[1:, 0::2] = np.sin(position_enc[1:, 0::2])  # dim 2i
-    position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2])  # dim 2i+1
-    return torch.from_numpy(position_enc).type(torch.FloatTensor)
-
-
 class PositionalEncoding(nn.Module):
     def __init__(self, dropout, dim, max_len=600):
         super(PositionalEncoding, self).__init__()
@@ -32,22 +18,19 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.dim = dim
 
-    def forward(self, inputs, step=None):
-        emb = inputs.mul(math.sqrt(self.dim))
-        batch_size, time_steps, feature_dim = inputs.size()
-        assert self.dim == feature_dim
+    def forward(self, inputs_length, step=None):
+
+        batch_size = inputs_length.size(0)
+        time_steps = inputs_length.max().item()
         if step is None:
             pos_enc = self.pe[:, :time_steps].repeat(batch_size, 1, 1)
-            emb = emb + pos_enc
         else:
             pos_enc = self.pe[:, step].repeat(batch_size, 1, 1)
-            emb = emb + pos_enc
-        emb = self.dropout(emb)
-        return emb
+        return pos_enc
 
 
 if __name__ == '__main__':
     embedding = PositionalEncoding(0.1, 10, 20)
     print(embedding.pe.size())
     inputs = torch.randn([4, 3, 10])
-    embedding(inputs)
+    print(embedding(inputs))

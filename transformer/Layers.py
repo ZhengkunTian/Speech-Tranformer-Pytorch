@@ -12,18 +12,14 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         self.slf_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout)
-        self.add_and_norm1 = nn.LayerNorm(d_model)
         self.pos_ffn = PositionwiseFeedForward(
             d_model, d_inner_hid, dropout=dropout)
-        self.add_and_norm2 = nn.LayerNorm(d_model)
 
     def forward(self, inputs, slf_attn_mask=None):
         attn_output, slf_attn_weight = self.slf_attn(
             inputs, inputs, inputs, mask=slf_attn_mask)
-        attn_norm_output = self.add_and_norm1(inputs + attn_output)
-        pffn_output = self.pos_ffn(attn_norm_output)
-        pffn_norm_output = self.add_and_norm2(attn_norm_output + pffn_output)
-        return pffn_norm_output, slf_attn_weight
+        pffn_output = self.pos_ffn(attn_output)
+        return pffn_output, slf_attn_weight
 
 
 class DecoderLayer(nn.Module):
@@ -33,22 +29,16 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
         self.slf_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout)
-        self.add_and_norm1 = nn.LayerNorm(d_model)
         self.enc_attn = MultiHeadAttention(
             n_head, d_model, d_k, d_v, dropout=dropout)
-        self.add_and_norm2 = nn.LayerNorm(d_model)
         self.pos_ffn = PositionwiseFeedForward(
             d_model, d_inner_hid, dropout=dropout)
-        self.add_and_norm3 = nn.LayerNorm(d_model)
 
     def forward(self,inputs, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None):
         slf_attn_output, slf_attn_weight = self.slf_attn(
             inputs, inputs, inputs, mask=slf_attn_mask)
-        slf_attn_norm_output = self.add_and_norm1(inputs + slf_attn_output)
         sre_attn_output, sre_attn_weight = self.enc_attn(
-            slf_attn_norm_output, enc_output, enc_output, mask=dec_enc_attn_mask)
-        sre_attn_norm_output = self.add_and_norm2(slf_attn_norm_output + sre_attn_output)
-        pffn_output = self.pos_ffn(sre_attn_norm_output)
-        pffn_norm_output = self.add_and_norm3(sre_attn_norm_output+pffn_output)
+            slf_attn_output, enc_output, enc_output, mask=dec_enc_attn_mask)
+        pffn_output = self.pos_ffn(sre_attn_output)
 
-        return pffn_norm_output, slf_attn_weight, sre_attn_weight
+        return pffn_output, (slf_attn_weight, sre_attn_weight)

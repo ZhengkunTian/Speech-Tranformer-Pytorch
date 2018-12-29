@@ -2,24 +2,28 @@ units_type: character
 feature_source: kaldi
 feature_type: fbank
 data:
-    vocab: /data3/tianzhengkun/data/aishell/vocab
+    name: aishell
+    vocab: data/aishell/vocab
     left_context_width: 3
     right_context_width: 0
     frame_rate: 30
     apply_cmvn: True
-    batch_size: 64
+    max_input_length: 1500
+    max_target_length: 50
     train:
-        arkscp: /data3/tianzhengkun/data/aishell/train/feats.scp
-        text: /data3/tianzhengkun/data/aishell/train/character
-        cmvnscp: /data3/tianzhengkun/data/aishell/train/cmvn.scp
+        batch_size: 4
+        arkscp: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/train/feats.scp
+        text: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/train/character
+        cmvnscp: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/train/cmvn.scp
     dev:
-        arkscp: /data3/tianzhengkun/data/aishell/dev/feats.scp
-        text: /data3/tianzhengkun/data/aishell/dev/character
-        cmvnscp: /data3/tianzhengkun/data/aishell/dev/cmvn.scp
+        batch_size: 4
+        arkscp: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/dev/feats.scp
+        text: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/dev/character
+        cmvnscp: /data1/tianzhengkun/kaldi/egs/aishell/s5/data/dev/cmvn.scp
 model:
-    vocab_size: 3004
+    vocab_size: 4337
     feature_dim: 320
-    max_inputs_length: 600
+    max_input_length: 600
     max_target_length: 50
     d_model: 512
     n_heads: 4
@@ -28,7 +32,6 @@ model:
     d_inner_hid: 1024
     num_enc_layer: 6
     num_dec_layer: 6
-    emb_scale: 1
     dropout: 0.2
     share_embedding: False
 training:

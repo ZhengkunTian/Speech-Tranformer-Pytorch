@@ -38,28 +38,35 @@ def init_logger(log_file=None):
     return logger
 
 
-def padding_info_mask(seq_q, seq_k):
+def padding_info_mask(seq_q_length, seq_k_length):
     ''' Indicate the padding-related part to mask '''
-    assert seq_q.dim() == 2 and seq_k.dim() == 2
-    mb_size, len_q = seq_q.size()
-    mb_size, len_k = seq_k.size()
-    pad_attn_mask = seq_k.data.eq(0).unsqueeze(1)   # bx1xsk
-    pad_attn_mask = pad_attn_mask.expand(mb_size, len_q, len_k)  # bxsqxsk
-    if seq_q.is_cuda:
-        device = seq_q.get_device()
-        return pad_attn_mask.cuda(device)
+    assert seq_q_length.dim() == 1 and seq_k_length.dim() == 1
+    batch_size = seq_k_length.size(0)
+    len_q = seq_q_length.max().item()
+    len_k = seq_k_length.max().item()
+    mask_mat = []
+    for i in range(batch_size):
+        max_len = len_k
+        length = seq_k_length[i].item()
+        mask_mat.append(np.column_stack([np.zeros([1, length]), np.ones([1, max_len-length])]))
+    mask_mat = np.row_stack(mask_mat).astype('uint8')
+    pad_attn_mask = torch.from_numpy(mask_mat).unsqueeze(1)
+    pad_attn_mask = pad_attn_mask.expand(batch_size, len_q, len_k)  # bxsqxsk
+    if seq_q_length.is_cuda:
+        return pad_attn_mask.cuda()
     return pad_attn_mask
 
 
-def feature_info_mask(seq):
+def feature_info_mask(seq_length):
     ''' Get an attention mask to avoid using the subsequent info.'''
-    assert seq.dim() == 2
-    attn_shape = (seq.size(0), seq.size(1), seq.size(1))
+    assert seq_length.dim() == 1
+    batch_size = seq_length.size(0)
+    max_len = seq_length.max().item()
+    attn_shape = (batch_size, max_len, max_len)
     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
     subsequent_mask = torch.from_numpy(subsequent_mask)
-    if seq.is_cuda:
-        device = seq.get_device()
-        return subsequent_mask.cuda(device)
+    if seq_length.is_cuda:
+        return subsequent_mask.cuda()
     return subsequent_mask
 
 
@@ -92,24 +99,38 @@ def count_parameters(model):
 
 
 def init_parameters(model):
-    for name, param in model.named_parameters():
+    for _, param in model.named_parameters():
         if param.dim() >= 2:
-            print('Initialize the parameters: %s' % name)
             torch.nn.init.xavier_normal_(param)
-    print('Parameter initialization completed')
 
 
-def load_single_gpu_model(model, state_dict):
-    model.load_state_dict(state_dict)
-    return model
+def get_saved_model_name(config):
+    name_list = [config.data.name]
+    name_list.append(config.model.type)
+    name_list.append('enc_%dly' % (config.model.num_enc_layers))
+    name_list.append('dec_%dly' % (config.model.num_dec_layers))
+    name_list.append('%dhd_%ddm'% (config.model.n_head, config.model.d_model))
+    return '_'.join(name_list)
 
 
-def load_multi_gpu_model(model, state_dict):
-    from collections import OrderedDict
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        namekey = k[7:]  # remove 'module.'
-        new_state_dict[namekey] = v
-        # load params
-    model.load_state_dict(new_state_dict)
-    return model
+def save_model(epoch, model, optimizer, config, logger):
+    checkpoint = {
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict()
+        }
+    model_name = get_saved_model_name(config)
+    model_path = config.data.name + '/' + model_name + '.epoch%s.chkpt' % str(epoch)
+    torch.save(checkpoint, model_path)
+    logger.info('Saved the model!')
+
+
+if __name__ == '__main__':
+    inputs = torch.LongTensor([[1, 2, 3, 4, 5], [1, 2, 3, 0, 0]])
+    length = torch.LongTensor([5, 3])
+    mask = padding_info_mask(length, length)
+    print(mask)
+    # mask2 = feature_info_mask(inputs)
+    # print(mask2)
+    length = torch.LongTensor([5, 3])
+    mask = feature_info_mask(length)
+    print(mask)

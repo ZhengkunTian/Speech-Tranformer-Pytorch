@@ -1,146 +1,136 @@
 '''
-This script handling the training process.
+This script handling the multi-gpu training process.
 '''
 import os
 import argparse
 import yaml
+import time
 import torch
 import torch.nn as nn
 import numpy as np
-from DataLoader import build_data_loader
+import torch.utils.data
+from Dataset import AudioDateset
 from transformer.Models import Transformer
 from transformer.Optim import ScheduledOptim
-from transformer.Utils import AttrDict, init_logger, count_parameters
+from transformer.Utils import AttrDict, init_logger, count_parameters, save_model, init_parameters
 from tensorboardX import SummaryWriter
 
 
-def train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer=None):
-    dev_step = 0
-    for epoch in range(config.training.epoches):
-        model.train()
-        for _, data_dict in enumerate(training_data):
-            inputs = data_dict['inputs']
-            inputs_pos = data_dict['inputs_pos']
-            targets = data_dict['sos_targets']
-            targets_pos = data_dict['sos_targets_pos']
-            eos_targets = data_dict['targets_eos']
-            optimizer.zero_grad()
-            logits, _ = model(inputs, inputs_pos, targets, targets_pos)
-            loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
-            loss.backward()
-            optimizer.step()
+def train(epoch, model, crit, optimizer, train_loader, logger, visualizer, config):
+    global global_step
+    model.train()
+    start_epoch = time.clock()
+    train_loss = 0
+    batch_step = len(train_loader)
+    for step, (inputs, targets, input_lengths, target_lengths, groud_truth) in enumerate(train_loader):
+        global_step += 1
+        if config.training.use_gpu:
+            inputs, targets, groud_truth = inputs.cuda(), targets.cuda(), groud_truth.cuda()
+            input_lengths, target_lengths = input_lengths.cuda(), target_lengths.cuda()
 
-            if visualizer is not None:
-                visualizer.add_scalar('model/train_loss', loss.item(), optimizer.current_step)
-                visualizer.add_scalar('model/learning_rate', optimizer.lr, optimizer.current_step)
+        max_inputs_length = input_lengths.max().item()
+        max_targets_length = target_lengths.max().item()
+        inputs = inputs[:, :max_inputs_length, :]
+        targets = targets[:, :max_targets_length]
+        groud_truth = groud_truth[:, :max_targets_length]
 
-            if optimizer.current_step % config.training.show_interval == 0:
-                logger.info('-Training-Epoch:%d, Global Step:%d, Learning Rate:%.6f, CrossEntropyLoss:%.5f' %
-                            (epoch, optimizer.current_step, optimizer.lr, loss.item()))
+        optimizer.zero_grad()
+        start = time.clock()
+        logits, _ = model(inputs, input_lengths, targets, target_lengths)
+        loss = crit(logits.contiguous().view(-1, config.model.vocab_size), groud_truth.contiguous().view(-1))
 
-        if config.training.dev_on_training:
-            model.eval()
-            total_loss = 0
-            for step, data_dict in enumerate(validation_data):
-                dev_step += 1
-                inputs = data_dict['inputs']
-                inputs_pos = data_dict['inputs_pos']
-                targets = data_dict['sos_targets']
-                targets_pos = data_dict['sos_targets_pos']
-                eos_targets = data_dict['targets_eos']
-                logits, _ = model(inputs, inputs_pos, targets, targets_pos)
-                loss = crit(logits.view(-1, logits.size(2)), eos_targets.contiguous().view(-1))
-                total_loss += loss.item()
+        train_loss += loss.item()
 
-                if visualizer is not None:
-                    visualizer.add_scalar('model/validation_loss', loss.item(), dev_step)
+        loss.backward()
+        grad_norm = nn.utils.clip_grad_norm_(model.parameters(), config.training.max_grad_norm)
+        optimizer.step(global_step)
 
-                if step % config.training.show_interval == 0:
-                    logger.info('-Validation-Step:%4d, CrossEntropyLoss:%.5f' % (step, loss.item()))
+        if step % config.training.show_interval == 0:
+            end  = time.clock()
+            process = 100.0 * step / len(train_loader)
+            logger.info('-Training-Epoch:%d, Step:%d / %d (%.4f), Learning Rate:%.6f, Grad Norm:%.5f, RNNTLoss:%.5f, Run Time:%.3f' %
+                        (epoch, step, batch_step, process, optimizer.lr, grad_norm, loss.item(), end-start))
 
-            logger.info('-Validation-Epoch:%4d, AverageCrossEntropyLoss:%.5f' %
-                        (epoch, total_loss/step))
-        # save model
-        model_state_dict = model.state_dict()
-        checkpoint = {
-            'settings': dict(config.model),
-            'model': model_state_dict,
-            'epoch': epoch,
-            'global_step': optimizer.current_step
-        }
-        model_name = config.training.save_model + '.epoch%s.chkpt' % str(epoch)
-        torch.save(checkpoint, model_name)
+        if visualizer is not None:
+            visualizer.add_scalar('train_loss', loss.item(), global_step)
+
+    end_epoch = time.clock()
+    logger.info('-Training-Epoch:%d, AverageRNNTLoss:%.5f, Run Time:%.5f' % (epoch, train_loss / (step+1), end_epoch-start_epoch))
 
 
 def main():
     ''' Main function '''
     parser = argparse.ArgumentParser()
-    parser.add_argument('-config', type=str, default=None)
+    parser.add_argument('-config', type=str, default='config/rnnt.yaml')
     parser.add_argument('-load_model', type=str, default=None)
-    parser.add_argument('-log', type=str, default='./exp/train.log')
+    parser.add_argument('-num_workers', type=int, default=0,
+                    help='how many subprocesses to use for data loading. '
+                    '0 means that the data will be loaded in the main process')
+    parser.add_argument('-log', type=str, default='train.log')
     opt = parser.parse_args()
 
     configfile = open(opt.config)
     config = AttrDict(yaml.load(configfile))
 
-    if not os.path.isdir('exp'):
-        os.mkdir('exp')
-    logger = init_logger(opt.log)
+    exp_name = config.data.name
+    if not os.path.isdir(exp_name):
+        os.mkdir(exp_name)
+    logger = init_logger(exp_name + '/' + opt.log)
 
-    if config.training.use_gpu:
+    if torch.cuda.is_available():
         torch.cuda.manual_seed(config.training.seed)
         torch.backends.cudnn.deterministic = True
     else:
-        torch.manual_seed(config.training.seed)
-    logger.info('Set random seed: %d' % config.training.seed)
+        raise NotImplementedError
 
     #========= Build DataLoader =========#
-    if config.use_gpu:
-        device_ids = int(config.training.gpu_ids)
-        device = torch.device('cuda:%d' % device_ids)
-    else:
-        device = torch.device('cpu')
-    training_data = build_data_loader(config, 'train', device)
-    validation_data = build_data_loader(config, 'dev', device)
+    train_dataset = AudioDateset(config.data, 'train')
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=config.data.train.batch_size, shuffle=True, num_workers=opt.num_workers)
+
+    assert train_dataset.vocab_size == config.model.vocab_size
 
     #========= Build A Model Or Load Pre-trained Model=========#
-    if opt.load_model:
-        checkpoint = torch.load(opt.load_model)
-        model_config = AttrDict(checkpoint['settings'])
-        model = Transformer(model_config)
-        model.load_state_dict(checkpoint['model'])
-        logger.info('Loaded model from %s' % opt.load_model)
+    model = Transformer(config.model)
 
-    else:
-        model = Transformer(config.model)
-
-    n_params, enc, dec = count_parameters(model)
-    logger.info('# the number of parameters in encoder: %d' % enc)
-    logger.info('# the number of parameters in decoder: %d' % dec)
+    n_params, enc_params, dec_params = count_parameters(model)
     logger.info('# the number of parameters in the whole model: %d' % n_params)
+    logger.info('# the number of parameters in encoder: %d' % enc_params)
+    logger.info('# the number of parameters in decoder: %d' % dec_params)
 
-    optimizer = ScheduledOptim(
-        torch.optim.Adam(
-            model.parameters(),
-            betas=(0.9, 0.98), eps=1e-09),
-        config.model.d_model, config.optimizer.n_warmup_steps)
-    logger.info('Created a optimizer.')
+    if torch.cuda.is_available():
+        model.cuda()
 
-    crit = nn.CrossEntropyLoss()
-    logger.info('Created cross entropy loss function')
+    global global_step
+    global_step = 0
+    # define an optimizer
+    optimizer = ScheduledOptim(model, config.model.d_model, config.optimizer)
 
-    if config.training.use_gpu:
-        model.cuda(device_ids)
-        logger.info('Loaded the model to the GPU')
+    # load pretrain model
+    if opt.load_model is not None:
+        checkpoint = torch.load(opt.load_model)
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        logger.info('Load pretrainded Model and previous Optimizer!')
+    else:
+        init_parameters(model)
+        logger.info('Initialized all parameters!')
+
+    # define loss function
+    crit = nn.CrossEntropyLoss(ignore_index=0)
 
     # create a visualizer
     if config.training.visualization:
-        visualizer = SummaryWriter()
+        visualizer = SummaryWriter(exp_name + '/log')
         logger.info('Created a visualizer.')
     else:
         visualizer = None
 
-    train(config, model, training_data, validation_data, crit, optimizer, logger, visualizer)
+    for epoch in range(config.training.epoches):
+        train(epoch, model, crit, optimizer, train_loader, logger, visualizer, config)
+        save_model(epoch, model, optimizer, config, logger)
+    
+    logger.info('Traing Process Finished')
 
 
 if __name__ == '__main__':

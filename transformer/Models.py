@@ -14,7 +14,7 @@ from transformer.Utils import padding_info_mask, feature_info_mask
 class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
-    def __init__(self, input_dim, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
+    def __init__(self, input_size, n_max_seq, n_layers=6, n_head=8, d_k=64, d_v=64,
                  d_model=512, d_inner_hid=1024, dropout=0.1, emb_scale=1):
 
         super(Encoder, self).__init__()
@@ -23,24 +23,27 @@ class Encoder(nn.Module):
         self.d_model = d_model
         self.emb_scale = emb_scale
 
-        # pos_embedding = position_encoding_init(self.n_max_seq, d_model)
-        # self.position_enc = nn.Embedding.from_pretrained(pos_embedding, freeze=True)
-
         self.position_enc = PositionalEncoding(dropout, d_model, self.n_max_seq)
-        self.input_proj = nn.Linear(input_dim, d_model, bias=False)
+
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_size, d_model, bias=True),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.LayerNorm(d_model, eps=1e-6)
+        )
 
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner_hid, n_head,
                          d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, inputs_data, inputs_pos):
-        return_attns = False
+    def forward(self, inputs, inputs_length, return_attns=False):
         # Position Encoding addition
-        enc_input = self.input_proj(inputs_data)
-        enc_input = self.position_enc(enc_input)
+        enc_input = self.input_proj(inputs)
+        pos_emb = self.position_enc(inputs_length)
+        enc_input += pos_emb
 
-        enc_slf_attn_mask = padding_info_mask(inputs_pos, inputs_pos)
+        enc_slf_attn_mask = padding_info_mask(inputs_length, inputs_length)
 
         enc_slf_attns = []
         enc_output = enc_input
@@ -66,10 +69,6 @@ class Decoder(nn.Module):
         self.d_model = d_model
         self.emb_scale = emb_scale
 
-        # pos_embebding = position_encoding_init(
-        #     self.n_max_seq, d_model)
-        # self.position_enc = nn.Embedding.from_pretrained(
-        #     pos_embebding, freeze=True)
         self.position_enc = PositionalEncoding(dropout, d_model, self.n_max_seq)
 
         self.tgt_word_emb = nn.Embedding(vocab_size, d_model, Constants.PAD)
@@ -79,8 +78,8 @@ class Decoder(nn.Module):
                          d_k, d_v, dropout=dropout)
             for _ in range(n_layers)])
 
-    def forward(self, outputs_data, outputs_pos, input_pos, enc_output):
-        return_attns = False
+    def forward(self, outputs_data, outputs_pos, input_pos, enc_output, return_attns=False):
+        
         # Word embedding look up
         dec_input = self.tgt_word_emb(outputs_data)
 
@@ -118,8 +117,10 @@ class Transformer(nn.Module):
     def __init__(self, config):
         super(Transformer, self).__init__()
 
+        self.return_attns = config.return_attns
+
         self.encoder = Encoder(
-            input_dim=config.feature_dim,
+            input_size=config.feature_dim,
             n_max_seq=config.max_inputs_length,
             n_layers=config.num_enc_layer,
             n_head=config.n_heads,
@@ -144,10 +145,9 @@ class Transformer(nn.Module):
         self.tgt_word_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
     def forward(self, inputs, inputs_pos, targets=None, targets_pos=None):
-        return_attns = False
-        enc_output, enc_slf_attn = self.encoder(inputs, inputs_pos)
+        enc_output, enc_slf_attn = self.encoder(inputs, inputs_pos, self.return_attns)
         dec_output, dec_slf_attn, dec_enc_attn = self.decoder(
-            targets, targets_pos, inputs_pos, enc_output)
+            targets, targets_pos, inputs_pos, enc_output, self.return_attns)
         seq_logit = self.tgt_word_proj(dec_output)
 
         return seq_logit, (enc_slf_attn, dec_slf_attn, dec_enc_attn)
